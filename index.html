@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#080a0d">
+    <meta name="description" content="Realtime CS2 Zombie Mod server status, resources, map and player monitor.">
+    <title>CS2 Zombie Mod Monitor</title>
+    <link rel="preconnect" href="https://raw.githubusercontent.com">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+    <main class="shell">
+      <nav class="topbar" aria-label="Server navigation">
+        <div class="brand">
+          <span class="brand-mark">ZM</span>
+          <span>Ghostbe CS2</span>
+        </div>
+        <div class="top-actions">
+          <span class="signal" id="signal">syncing</span>
+          <button class="icon-button" id="copy-endpoint" type="button" aria-label="Copy server address">
+            <span>↗</span>
+          </button>
+        </div>
+      </nav>
+
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Zombie Mod Operations</p>
+          <h1 id="server-name">CS2-ZM-Test</h1>
+          <div class="endpoint">
+            <span id="server-ip">195.137.244.196</span>:<span id="server-port">27015</span>
+          </div>
+        </div>
+
+        <aside class="map-card" aria-label="Current map">
+          <img id="map-image" alt="" loading="eager">
+          <div class="map-card-body">
+            <span>Current Map</span>
+            <strong id="map">de_dust2</strong>
+          </div>
+        </aside>
+      </section>
+
+      <section class="command-grid" aria-label="Server summary">
+        <article class="tile tile-online">
+          <span>Status</span>
+          <strong id="online-pill">offline</strong>
+        </article>
+        <article class="tile">
+          <span>Players</span>
+          <strong id="players">0/0</strong>
+        </article>
+        <article class="tile">
+          <span>Bots</span>
+          <strong id="bots">0</strong>
+        </article>
+        <article class="tile">
+          <span>Host Uptime</span>
+          <strong id="uptime">-</strong>
+        </article>
+      </section>
+
+      <section class="ops-grid">
+        <article class="panel large">
+          <div class="panel-head">
+            <div>
+              <span>Resource telemetry</span>
+              <h2>VPS Loadout</h2>
+            </div>
+            <b id="updated-at">-</b>
+          </div>
+
+          <div class="meter-list">
+            <div class="meter">
+              <div><span>CPU</span><strong id="cpu-value">0%</strong></div>
+              <i><em id="cpu-bar"></em></i>
+              <p id="cpu-meta">-</p>
+            </div>
+            <div class="meter">
+              <div><span>RAM</span><strong id="ram-value">0%</strong></div>
+              <i><em id="ram-bar"></em></i>
+              <p id="ram-meta">-</p>
+            </div>
+            <div class="meter">
+              <div><span>Disk</span><strong id="disk-value">0%</strong></div>
+              <i><em id="disk-bar"></em></i>
+              <p id="disk-meta">-</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel process">
+          <div class="panel-head">
+            <div>
+              <span>Runtime</span>
+              <h2>CS2 Process</h2>
+            </div>
+            <b id="process-value">offline</b>
+          </div>
+          <dl>
+            <dt>RSS</dt><dd id="process-rss">-</dd>
+            <dt>Threads</dt><dd id="process-threads">-</dd>
+            <dt>Swap</dt><dd id="swap-meta">-</dd>
+            <dt>API</dt><dd id="api-state">probing</dd>
+          </dl>
+        </article>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
