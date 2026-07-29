@@ -59,6 +59,11 @@ async function loadConfig() {
     localStorage.setItem("zm-api-base", fromQuery);
   }
 
+  if (window.location.hostname === "195.137.244.196") {
+    apiBase = "";
+    return;
+  }
+
   const stored = localStorage.getItem("zm-api-base");
   if (stored) {
     apiBase = stored;
