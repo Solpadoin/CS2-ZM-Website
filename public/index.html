@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CS2 Zombie Mod Monitor</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="status-band">
+        <div>
+          <p class="eyebrow">CS2 Zombie Mod</p>
+          <h1 id="server-name">CS2-ZM-Test</h1>
+          <p class="endpoint"><span id="server-ip">195.137.244.196</span>:<span id="server-port">27015</span></p>
+        </div>
+        <div class="status-pill" id="online-pill">checking</div>
+      </section>
+
+      <section class="overview-grid">
+        <article class="metric wide">
+          <span>Карта</span>
+          <strong id="map">-</strong>
+        </article>
+        <article class="metric">
+          <span>Игроки</span>
+          <strong id="players">0/0</strong>
+        </article>
+        <article class="metric">
+          <span>Боты</span>
+          <strong id="bots">0</strong>
+        </article>
+        <article class="metric">
+          <span>Uptime VPS</span>
+          <strong id="uptime">-</strong>
+        </article>
+      </section>
+
+      <section class="monitor-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>CPU</h2>
+            <strong id="cpu-value">0%</strong>
+          </div>
+          <div class="bar"><i id="cpu-bar"></i></div>
+          <p id="cpu-meta">-</p>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>RAM</h2>
+            <strong id="ram-value">0%</strong>
+          </div>
+          <div class="bar"><i id="ram-bar"></i></div>
+          <p id="ram-meta">-</p>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Disk</h2>
+            <strong id="disk-value">0%</strong>
+          </div>
+          <div class="bar"><i id="disk-bar"></i></div>
+          <p id="disk-meta">-</p>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>CS2 Process</h2>
+            <strong id="process-value">-</strong>
+          </div>
+          <div class="process-list">
+            <span>RSS</span><b id="process-rss">-</b>
+            <span>Threads</span><b id="process-threads">-</b>
+            <span>Swap</span><b id="swap-meta">-</b>
+          </div>
+        </article>
+      </section>
+
+      <footer>
+        <span>Last update</span>
+        <b id="updated-at">-</b>
+      </footer>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

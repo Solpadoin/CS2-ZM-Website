@@ -1,0 +1,12 @@
+{
+  "name": "cs2-zm-website",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CS2 zombie mod server landing page and realtime monitor",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
