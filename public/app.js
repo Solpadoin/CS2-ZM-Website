@@ -1,6 +1,19 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const DEFAULT_API_BASE = "https://api.zm2.ghostbe.site";
+const DEFAULT_MAP = "de_dust2";
+const MAP_BASE = "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images";
+
+let apiBase = "";
+
+function mapAssets(mapName) {
+  const map = (mapName || DEFAULT_MAP).toLowerCase().replace(/[^a-z0-9_]/g, "") || DEFAULT_MAP;
+  return {
+    thumbnail: `${MAP_BASE}/thumbs/${map}_png.png`,
+    hero: `${MAP_BASE}/thumbs/${map}_1_png.png`
+  };
+}
 
 function bytes(value) {
   if (!Number.isFinite(value)) return "-";
@@ -22,7 +35,7 @@ function setBar(id, value) {
   const bar = $(id);
   const clamped = Math.max(0, Math.min(100, value || 0));
   bar.style.width = `${clamped}%`;
-  bar.style.background = clamped > 88 ? "var(--red)" : clamped > 68 ? "var(--amber)" : "var(--green)";
+  bar.style.background = clamped > 88 ? "var(--red)" : clamped > 68 ? "var(--orange)" : "var(--green)";
 }
 
 function uptime(seconds) {
@@ -34,21 +47,60 @@ function uptime(seconds) {
   return `${minutes}m`;
 }
 
-async function refresh() {
-  const response = await fetch("/api/status", { cache: "no-store" });
-  const data = await response.json();
+function statusUrl() {
+  const base = apiBase.replace(/\/$/, "");
+  return `${base}/api/status`;
+}
 
+async function loadConfig() {
+  const url = new URL(window.location.href);
+  const fromQuery = url.searchParams.get("api");
+  if (fromQuery) {
+    localStorage.setItem("zm-api-base", fromQuery);
+  }
+
+  const stored = localStorage.getItem("zm-api-base");
+  if (stored) {
+    apiBase = stored;
+    return;
+  }
+
+  try {
+    const response = await fetch("./config.json", { cache: "no-store" });
+    if (response.ok) {
+      const config = await response.json();
+      apiBase = config.apiBaseUrl || "";
+      return;
+    }
+  } catch {
+    // Static hosting can work without a config file.
+  }
+
+  apiBase = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? "" : DEFAULT_API_BASE;
+}
+
+function applyServer(data) {
   const server = data.cs2.server;
+  const assets = server.mapAssets || mapAssets(server.map);
+
   $("server-name").textContent = server.name || "CS2-ZM-Test";
   $("server-ip").textContent = server.ip;
   $("server-port").textContent = server.port;
-  $("map").textContent = server.map || "-";
+  $("map").textContent = server.map || DEFAULT_MAP;
   $("players").textContent = `${server.players || 0}/${server.maxPlayers || 0}`;
   $("bots").textContent = server.bots ?? 0;
+  $("map-image").onerror = () => {
+    $("map-image").src = mapAssets(server.map).thumbnail;
+  };
+  $("map-image").src = assets.thumbnail || mapAssets(server.map).thumbnail;
+  $("map-image").alt = server.map ? `${server.map} thumbnail` : "CS2 map thumbnail";
+  document.documentElement.style.setProperty("--map-bg", `url("${assets.hero || assets.thumbnail}")`);
 
-  const pill = $("online-pill");
-  pill.textContent = server.online ? "online" : "offline";
-  pill.className = `status-pill ${server.online ? "online" : "offline"}`;
+  const onlineClass = server.online ? "online" : "offline";
+  $("signal").textContent = onlineClass;
+  $("signal").className = `signal ${onlineClass}`;
+  $("online-pill").textContent = onlineClass;
+  $("online-pill").className = onlineClass;
 
   $("cpu-value").textContent = percent(data.host.cpu.percent);
   $("cpu-meta").textContent = `${data.host.cpu.cores} cores, load ${data.host.loadAverage[0].toFixed(2)}`;
@@ -69,7 +121,29 @@ async function refresh() {
   $("swap-meta").textContent = `${bytes(data.host.swap.used)} / ${bytes(data.host.swap.total)}`;
   $("uptime").textContent = uptime(data.host.uptime);
   $("updated-at").textContent = new Date(data.updatedAt).toLocaleTimeString();
+  $("api-state").textContent = apiBase || "same-origin";
 }
 
-refresh().catch(console.error);
-setInterval(() => refresh().catch(console.error), 2000);
+async function refresh() {
+  try {
+    const response = await fetch(statusUrl(), { cache: "no-store" });
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    applyServer(await response.json());
+  } catch {
+    $("signal").textContent = "api down";
+    $("signal").className = "signal offline";
+    $("online-pill").textContent = "offline";
+    $("online-pill").className = "offline";
+    $("api-state").textContent = "unreachable";
+  }
+}
+
+$("copy-endpoint").addEventListener("click", async () => {
+  const endpoint = `${$("server-ip").textContent}:${$("server-port").textContent}`;
+  await navigator.clipboard?.writeText(endpoint);
+});
+
+loadConfig().then(() => {
+  refresh();
+  setInterval(refresh, 2000);
+});

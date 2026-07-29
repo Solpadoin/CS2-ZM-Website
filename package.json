@@ -4,7 +4,8 @@
   "private": true,
   "description": "CS2 zombie mod server landing page and realtime monitor",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node --check server.js"
   },
   "engines": {
     "node": ">=20"

@@ -1,0 +1,37 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "server.js"
+      - "package.json"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload backend files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          source: "server.js,package.json,public"
+          target: "/opt/cs2-monitor/app"
+          overwrite: true
+
+      - name: Restart backend
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          script: |
+            systemctl restart cs2-monitor.service
+            systemctl --no-pager --full status cs2-monitor.service

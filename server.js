@@ -16,6 +16,8 @@ const CS2_HOST = process.env.CS2_HOST || "127.0.0.1";
 const CS2_PORT = Number(process.env.CS2_PORT || 27015);
 const SERVER_IP = process.env.SERVER_IP || "195.137.244.196";
 const SERVER_NAME = process.env.SERVER_NAME || "CS2-ZM-Test";
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const MAP_ASSET_BASE = process.env.MAP_ASSET_BASE || "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images";
 
 let lastCpu = null;
 
@@ -24,9 +26,22 @@ function sendJson(res, status, payload) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
+    "Access-Control-Allow-Origin": CORS_ORIGIN,
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
     "Content-Length": Buffer.byteLength(body)
   });
   res.end(body);
+}
+
+function mapAssets(mapName) {
+  const map = (mapName || "de_dust2").toLowerCase().replace(/[^a-z0-9_]/g, "");
+  return {
+    icon: `${MAP_ASSET_BASE}/${map}.png`,
+    radar: `${MAP_ASSET_BASE}/radars/${map}_radar_psd.png`,
+    thumbnail: `${MAP_ASSET_BASE}/thumbs/${map}_png.png`,
+    hero: `${MAP_ASSET_BASE}/thumbs/${map}_1_png.png`
+  };
 }
 
 async function readCpuSnapshot() {
@@ -157,6 +172,7 @@ function querySourceInfo(host, port, timeoutMs = 1200) {
           online: true,
           name: name.value,
           map: map.value,
+          mapAssets: mapAssets(map.value),
           folder: folder.value,
           game: game.value,
           players,
@@ -190,7 +206,7 @@ async function getStatus() {
     querySourceInfo(CS2_HOST, CS2_PORT)
   ]);
 
-  return {
+  const status = {
     updatedAt: new Date().toISOString(),
     host: {
       cpu: { cores: os.cpus().length, percent: cpu },
@@ -210,10 +226,14 @@ async function getStatus() {
         players: 0,
         maxPlayers: 0,
         bots: 0,
-        map: null
+        map: null,
+        mapAssets: mapAssets(null)
       }
     }
   };
+
+  status.cs2.server.mapAssets = mapAssets(status.cs2.server.map);
+  return status;
 }
 
 async function serveStatic(req, res) {
@@ -232,6 +252,7 @@ async function serveStatic(req, res) {
       ".html": "text/html; charset=utf-8",
       ".css": "text/css; charset=utf-8",
       ".js": "text/javascript; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
       ".svg": "image/svg+xml"
     };
     res.writeHead(200, { "Content-Type": types[ext] || "application/octet-stream" });
@@ -243,6 +264,21 @@ async function serveStatic(req, res) {
 }
 
 const server = http.createServer(async (req, res) => {
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": CORS_ORIGIN,
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
+    });
+    res.end();
+    return;
+  }
+
+  if (req.url?.startsWith("/api/health")) {
+    sendJson(res, 200, { ok: true, updatedAt: new Date().toISOString() });
+    return;
+  }
+
   if (req.url?.startsWith("/api/status")) {
     try {
       sendJson(res, 200, await getStatus());
