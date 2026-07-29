@@ -3,34 +3,44 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#080a0d">
-    <meta name="description" content="Realtime CS2 Zombie Mod server status, resources, map and player monitor.">
-    <title>CS2 Zombie Mod Monitor</title>
+    <meta name="theme-color" content="#0b0f12">
+    <meta name="description" content="OldSchool Zombie Plague CS2 server status, resources, map and player monitor.">
+    <title>OldSchool Zombie Plague</title>
     <link rel="preconnect" href="https://raw.githubusercontent.com">
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
     <div class="backdrop" aria-hidden="true"></div>
     <main class="shell">
-      <nav class="topbar" aria-label="Server navigation">
-        <div class="brand">
-          <span class="brand-mark">ZM</span>
-          <span>Ghostbe CS2</span>
-        </div>
+      <header class="topbar" aria-label="Server header">
+        <a class="brand" href="./" aria-label="OldSchool Zombie Plague home">
+          <span class="brand-mark">ZP</span>
+          <span>
+            <b>OldSchool</b>
+            <small>Zombie Plague</small>
+          </span>
+        </a>
         <div class="top-actions">
           <span class="signal" id="signal">syncing</span>
-          <button class="icon-button" id="copy-endpoint" type="button" aria-label="Copy server address">
-            <span>↗</span>
-          </button>
+          <a class="connect-mini" id="direct-connect-top" href="steam://connect/195.137.244.196:27015">Join</a>
         </div>
-      </nav>
+      </header>
 
       <section class="hero">
         <div class="hero-copy">
-          <p class="eyebrow">Zombie Mod Operations</p>
-          <h1 id="server-name">CS2-ZM-Test</h1>
-          <div class="endpoint">
-            <span id="server-ip">195.137.244.196</span>:<span id="server-port">27015</span>
+          <p class="eyebrow">Counter-Strike 2 Zombie Mod</p>
+          <h1 id="server-name">OldSchool Zombie Plague</h1>
+          <p class="hero-lead">Live server telemetry, map rotation signal and direct Steam connection for the classic infection loop.</p>
+
+          <div class="connect-card" aria-label="Connection controls">
+            <div>
+              <span>Server Endpoint</span>
+              <strong><span id="server-ip">195.137.244.196</span>:<span id="server-port">27015</span></strong>
+            </div>
+            <div class="connect-actions">
+              <button class="copy-button" id="copy-endpoint" type="button">Copy</button>
+              <a class="primary-button" id="direct-connect" href="steam://connect/195.137.244.196:27015">Direct Connect</a>
+            </div>
           </div>
         </div>
 
@@ -43,30 +53,30 @@
         </aside>
       </section>
 
-      <section class="command-grid" aria-label="Server summary">
-        <article class="tile tile-online">
+      <section class="status-strip" aria-label="Server summary">
+        <article class="stat online-stat">
           <span>Status</span>
           <strong id="online-pill">offline</strong>
         </article>
-        <article class="tile">
+        <article class="stat">
           <span>Players</span>
           <strong id="players">0/0</strong>
         </article>
-        <article class="tile">
+        <article class="stat">
           <span>Bots</span>
           <strong id="bots">0</strong>
         </article>
-        <article class="tile">
+        <article class="stat">
           <span>Host Uptime</span>
           <strong id="uptime">-</strong>
         </article>
       </section>
 
       <section class="ops-grid">
-        <article class="panel large">
+        <article class="panel telemetry">
           <div class="panel-head">
             <div>
-              <span>Resource telemetry</span>
+              <span>Resource Telemetry</span>
               <h2>VPS Loadout</h2>
             </div>
             <b id="updated-at">-</b>
@@ -109,6 +119,7 @@
       </section>
     </main>
 
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./app.js"></script>
   </body>
 </html>
