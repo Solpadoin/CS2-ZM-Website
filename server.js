@@ -11,7 +11,7 @@ const crypto = require("node:crypto");
 
 const execFileAsync = promisify(execFile);
 
-const VERSION = "1.4.0";
+const VERSION = "1.5.0";
 const PORT = Number(process.env.PORT || 3000);
 // Frontend lives in the repo root (GitHub Pages serves the site). Locally this
 // lets `node server.js` preview the site; on the API host it only holds
@@ -555,15 +555,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url?.startsWith("/api/players")) {
-    const raw = await queryPlayers(CS2_HOST, CS2_PORT);
-    // CS2 reports filler bots with blank names — drop them so only named
-    // (human / connected) players surface.
-    const players = (raw || []).filter((p) => p.name && p.name.trim());
-    sendJson(req, res, 200, {
-      online: Array.isArray(raw),
-      count: players.length,
-      players
-    });
+    // Source of truth is the plugin's players_online.json (real names, incl.
+    // bots). A2S is unreliable in CS2 (blank player names). SteamIDs are
+    // stripped here for public privacy.
+    const data = await readAdminData("players_online.json", { players: [] });
+    const players = (data.players || []).map((p) => ({ name: p.name, team: p.team, bot: !!p.bot }));
+    sendJson(req, res, 200, { online: true, count: players.length, players });
     return;
   }
 
@@ -626,7 +623,8 @@ const server = http.createServer(async (req, res) => {
   if (req.url?.startsWith("/api/admin/players")) {
     const auth = await requireAdmin(req);
     if (!auth) { sendJson(req, res, 403, { error: "forbidden" }); return; }
-    const online = await readAdminData("players_online.json", { players: [] });
+    const onlineData = await readAdminData("players_online.json", { players: [] });
+    const online = (onlineData.players || []).filter((p) => !p.bot); // real players only (bans need SteamID)
     const cutoff = Math.floor(Date.now() / 1000) - 3600;
     let recent = [];
     try {
@@ -635,7 +633,7 @@ const server = http.createServer(async (req, res) => {
         .filter((p) => (p.lastSeen || 0) >= cutoff)
         .map((p) => ({ steamId: String(p.steamId), name: p.lastName || "", lastSeen: p.lastSeen || 0 }));
     } catch {}
-    sendJson(req, res, 200, { online: online.players || [], recent });
+    sendJson(req, res, 200, { online, recent });
     return;
   }
 

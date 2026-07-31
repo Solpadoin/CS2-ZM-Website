@@ -242,42 +242,34 @@ async function initHome() {
 async function loadPlayers() {
   const host = $("[data-players-table]");
   if (!host) return;
-  let rows = [], preview = false;
-  try {
-    const data = await api("/api/players");
-    rows = data.players || [];
-  } catch { rows = []; }
-  if (!rows.length) { rows = DEMO_PLAYERS; preview = true; }
-  rows = rows.slice().sort((a, b) => (b.score || 0) - (a.score || 0)).map((p, i) => ({ ...p, _rank: i + 1 }));
+  let rows = [];
+  try { const data = await api("/api/players"); rows = data.players || []; } catch { rows = []; }
+  // humans first, then bots
+  rows = rows.slice().sort((a, b) => (a.bot === b.bot) ? 0 : a.bot ? 1 : -1).map((p, i) => ({ ...p, _rank: i + 1 }));
   const count = $("[data-players-count]");
   if (count) count.textContent = `${rows.length} online`;
 
   renderPaged("home-players", rows, {
-    perPage: 7, hostSel: "[data-players-table]", pagerSel: "[data-players-pager]", cols: 4,
-    emptyMsg: "No players connected right now.",
+    perPage: 7, hostSel: "[data-players-table]", pagerSel: "[data-players-pager]", cols: 3,
+    emptyMsg: "No players on the server right now.",
     rowMapper: (p) => `
       <tr>
         <td class="rank ${rankClass(p._rank - 1)}">${p._rank}</td>
-        <td><div class="pname"><span class="pav">${initials(p.name)}</span>${escapeHtml(p.name)}</div></td>
-        <td class="num pscore">${fmtInt(p.score)}</td>
-        <td class="num muted">${fmtDuration(p.duration)}</td>
+        <td><div class="pname"><span class="pav">${initials(p.name)}</span>${escapeHtml(p.name)}${p.bot ? ' <span class="tag" style="padding:2px 7px;font-size:10px">BOT</span>' : ""}</div></td>
+        <td class="num">${p.team === 3 ? "Human" : p.team === 2 ? "Zombie" : "—"}</td>
       </tr>`
   });
-
-  togglePreview("[data-players-preview]", preview);
 }
 
 async function loadLeaderboard(host, limit, teaser) {
   if (!host) return;
-  let rows = [], preview = false;
+  let rows = [];
   try {
     const data = await api("/api/leaderboard");
     rows = data.players || [];
   } catch { rows = []; }
-  if (!rows.length) { rows = DEMO_LEADERBOARD; preview = true; }
-  window.__LB = { rows, preview };
+  window.__LB = { rows };
   renderLeaderboard(rows.slice(0, limit || rows.length), host, teaser);
-  togglePreview("[data-lb-preview]", preview);
 }
 
 function renderLeaderboard(rows, host, teaser) {
