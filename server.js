@@ -10,7 +10,7 @@ const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const CS2_HOST = process.env.CS2_HOST || "127.0.0.1";
@@ -19,6 +19,11 @@ const SERVER_IP = process.env.SERVER_IP || "195.137.244.196";
 const SERVER_NAME = process.env.SERVER_NAME || "CS2-ZM-Test";
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 const MAP_ASSET_BASE = process.env.MAP_ASSET_BASE || "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images";
+// Path to the ZombiePlague persisted player profiles (leaderboard source).
+// Empty/missing file => /api/leaderboard reports available:false and the site
+// falls back to preview data. Point this at the live profiles file once the
+// plugin's profile persistence is enabled.
+const PROFILES_PATH = process.env.PROFILES_PATH || "/opt/cs2/server/game/csgo/addons/cs2fixes/data/account_profiles.json";
 
 // CORS_ORIGIN may be "*", a single origin, or a comma-separated allowlist.
 const ALLOWED_ORIGINS = CORS_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
@@ -224,6 +229,75 @@ function querySourceInfo(host, port, timeoutMs = 1200) {
   });
 }
 
+// A2S_PLAYER: challenge handshake, then parse the live player list.
+function queryPlayers(host, port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket("udp4");
+    const timer = setTimeout(() => { try { socket.close(); } catch {} resolve(null); }, timeoutMs);
+
+    const sendRequest = (challenge) => {
+      const buf = Buffer.alloc(9);
+      buf.writeInt32LE(-1, 0);        // 0xFFFFFFFF
+      buf.writeUInt8(0x55, 4);        // A2S_PLAYER header 'U'
+      buf.writeInt32LE(challenge, 5); // challenge (or -1 to request one)
+      socket.send(buf, port, host);
+    };
+
+    socket.on("message", (msg) => {
+      try {
+        if (msg.readInt32LE(0) !== -1) return;
+        const type = msg.readUInt8(4);
+        if (type === 0x41) { // S2C_CHALLENGE -> resend with the given challenge
+          sendRequest(msg.readInt32LE(5));
+          return;
+        }
+        if (type === 0x44) { // player list
+          clearTimeout(timer);
+          let offset = 5;
+          const count = msg.readUInt8(offset); offset += 1;
+          const players = [];
+          for (let i = 0; i < count && offset < msg.length; i++) {
+            offset += 1; // player index (always 0 in practice)
+            const name = readCString(msg, offset); offset = name.offset;
+            const score = msg.readInt32LE(offset); offset += 4;
+            const duration = msg.readFloatLE(offset); offset += 4;
+            players.push({ name: name.value, score, duration: Math.max(0, Math.round(duration)) });
+          }
+          try { socket.close(); } catch {}
+          resolve(players);
+        }
+      } catch {
+        clearTimeout(timer);
+        try { socket.close(); } catch {}
+        resolve(null);
+      }
+    });
+
+    socket.on("error", () => { clearTimeout(timer); try { socket.close(); } catch {} resolve(null); });
+    sendRequest(-1); // request a challenge first
+  });
+}
+
+// Read + normalise the ZombiePlague profile store into leaderboard rows.
+async function readLeaderboard() {
+  const raw = await fs.readFile(PROFILES_PATH, "utf8");
+  const data = JSON.parse(raw);
+  const profiles = Array.isArray(data) ? data : (data.profiles || []);
+  return profiles.map((p) => ({
+    name: p.lastName || p.name || "Unknown",
+    steamId: String(p.steamId ?? ""),
+    level: p.level ?? 1,
+    experience: p.experience ?? 0,
+    prestige: p.prestige ?? 0,
+    totalKills: p.totalKills ?? ((p.humanKills || 0) + (p.zombieKills || 0)),
+    infections: p.infections ?? 0,
+    totalWins: p.totalWins ?? ((p.humanWins || 0) + (p.zombieWins || 0)),
+    roundsPlayed: p.roundsPlayed ?? 0,
+    bestWinStreak: p.bestWinStreak ?? 0,
+    ammoPacks: p.ammoPacks ?? 0
+  })).sort((a, b) => b.experience - a.experience);
+}
+
 async function getStatus() {
   const [cpu, memory, swap, disk, cs2Process, query] = await Promise.all([
     getCpuUsage(),
@@ -281,7 +355,9 @@ async function serveStatic(req, res) {
       ".css": "text/css; charset=utf-8",
       ".js": "text/javascript; charset=utf-8",
       ".json": "application/json; charset=utf-8",
-      ".svg": "image/svg+xml"
+      ".svg": "image/svg+xml",
+      ".ico": "image/x-icon",
+      ".png": "image/png"
     };
     res.writeHead(200, { "Content-Type": types[ext] || "application/octet-stream" });
     res.end(data);
@@ -313,6 +389,30 @@ const server = http.createServer(async (req, res) => {
       sendJson(req, res, 200, await getStatus());
     } catch (error) {
       sendJson(req, res, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.url?.startsWith("/api/players")) {
+    const raw = await queryPlayers(CS2_HOST, CS2_PORT);
+    // CS2 reports filler bots with blank names — drop them so only named
+    // (human / connected) players surface.
+    const players = (raw || []).filter((p) => p.name && p.name.trim());
+    sendJson(req, res, 200, {
+      online: Array.isArray(raw),
+      count: players.length,
+      players
+    });
+    return;
+  }
+
+  if (req.url?.startsWith("/api/leaderboard")) {
+    try {
+      const players = await readLeaderboard();
+      sendJson(req, res, 200, { available: true, count: players.length, players });
+    } catch {
+      // No profile store yet — the site falls back to preview data.
+      sendJson(req, res, 200, { available: false, count: 0, players: [] });
     }
     return;
   }
