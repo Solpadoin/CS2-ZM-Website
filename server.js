@@ -7,12 +7,16 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
+const crypto = require("node:crypto");
 
 const execFileAsync = promisify(execFile);
 
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const PORT = Number(process.env.PORT || 3000);
-const PUBLIC_DIR = path.join(__dirname, "public");
+// Frontend lives in the repo root (GitHub Pages serves the site). Locally this
+// lets `node server.js` preview the site; on the API host it only holds
+// server.js/package.json, so non-/api requests simply 404 there.
+const PUBLIC_DIR = __dirname;
 const CS2_HOST = process.env.CS2_HOST || "127.0.0.1";
 const CS2_PORT = Number(process.env.CS2_PORT || 27015);
 const SERVER_IP = process.env.SERVER_IP || "195.137.244.196";
@@ -24,6 +28,14 @@ const MAP_ASSET_BASE = process.env.MAP_ASSET_BASE || "https://raw.githubusercont
 // falls back to preview data. Point this at the live profiles file once the
 // plugin's profile persistence is enabled.
 const PROFILES_PATH = process.env.PROFILES_PATH || "/opt/cs2/server/game/csgo/addons/cs2fixes/data/account_profiles.json";
+
+// --- Steam Sign-In (OpenID 2.0) ---
+const STEAM_API_KEY = process.env.STEAM_API_KEY || "";                 // from steamcommunity.com/dev/apikey
+const SESSION_SECRET = process.env.SESSION_SECRET || "dev-insecure-secret";
+const SITE_URL = process.env.SITE_URL || "https://zm2.ghostbe.site";   // frontend origin (redirect target)
+const SELF_URL = process.env.SELF_URL || "https://api.zm2.ghostbe.site"; // this API origin (OpenID realm)
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || ".ghostbe.site";     // shared across sub-domains
+const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 
 // CORS_ORIGIN may be "*", a single origin, or a comma-separated allowlist.
 const ALLOWED_ORIGINS = CORS_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
@@ -45,7 +57,8 @@ function isLocalhostOrigin(origin) {
 // Reflect the request's Origin when it is allowed; otherwise fall back to the
 // first configured origin so production behaviour is unchanged.
 function corsOriginFor(req) {
-  if (ALLOW_ANY_ORIGIN) return "*";
+  // Reflect the request origin (needed for credentialed requests / cookies).
+  if (ALLOW_ANY_ORIGIN) return req.headers.origin || "*";
   const origin = req.headers.origin;
   if (origin && (ALLOWED_ORIGINS.includes(origin) || isLocalhostOrigin(origin))) {
     return origin;
@@ -53,16 +66,24 @@ function corsOriginFor(req) {
   return ALLOWED_ORIGINS[0] || "*";
 }
 
-function sendJson(req, res, status, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
+function corsHeaders(req) {
+  return {
     "Access-Control-Allow-Origin": corsOriginFor(req),
+    "Access-Control-Allow-Credentials": "true",
     "Vary": "Origin",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Content-Length": Buffer.byteLength(body)
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+}
+
+function sendJson(req, res, status, payload, extraHeaders) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    ...corsHeaders(req),
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Length": Buffer.byteLength(body),
+    ...(extraHeaders || {})
   });
   res.end(body);
 }
@@ -298,6 +319,83 @@ async function readLeaderboard() {
   })).sort((a, b) => b.experience - a.experience);
 }
 
+// ---- session (HMAC-signed cookie) ----
+function signSession(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+function verifySession(token) {
+  if (!token || !token.includes(".")) return null;
+  const [body, sig] = token.split(".");
+  const expect = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  const a = Buffer.from(sig), b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString());
+    if (payload.exp && Date.now() > payload.exp) return null;
+    return payload;
+  } catch { return null; }
+}
+function getCookie(req, name) {
+  const raw = req.headers.cookie || "";
+  for (const part of raw.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return null;
+}
+function sessionCookie(value, maxAgeSec) {
+  return `zm_session=${value}; Domain=${COOKIE_DOMAIN}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${maxAgeSec}`;
+}
+
+// ---- Steam OpenID 2.0 ----
+function validRedirect(target) {
+  try {
+    const u = new URL(target);
+    const site = new URL(SITE_URL);
+    if (u.hostname === site.hostname || u.hostname === "localhost" || u.hostname === "127.0.0.1") return u.toString();
+  } catch {}
+  return `${SITE_URL}/profile.html`;
+}
+function steamLoginRedirect(returnTo) {
+  const p = new URLSearchParams({
+    "openid.ns": "http://specs.openid.net/auth/2.0",
+    "openid.mode": "checkid_setup",
+    "openid.return_to": returnTo,
+    "openid.realm": SELF_URL,
+    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+    "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select"
+  });
+  return `https://steamcommunity.com/openid/login?${p.toString()}`;
+}
+async function verifySteamReturn(searchParams) {
+  const body = new URLSearchParams(searchParams);
+  body.set("openid.mode", "check_authentication");
+  const r = await fetch("https://steamcommunity.com/openid/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  });
+  const text = await r.text();
+  if (!/is_valid\s*:\s*true/i.test(text)) return null;
+  const claimed = searchParams.get("openid.claimed_id") || "";
+  const m = claimed.match(/\/id\/(\d{17})$/);
+  return m ? m[1] : null;
+}
+async function fetchSteamSummary(steamId) {
+  const fallback = { steamId, name: `Survivor ${steamId.slice(-4)}`, avatar: "", profileUrl: `https://steamcommunity.com/profiles/${steamId}` };
+  if (!STEAM_API_KEY) return fallback;
+  try {
+    const r = await fetch(`https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${STEAM_API_KEY}&steamids=${steamId}`);
+    const j = await r.json();
+    const p = j?.response?.players?.[0];
+    if (!p) return fallback;
+    return { steamId, name: p.personaname || fallback.name, avatar: p.avatarfull || p.avatarmedium || "", profileUrl: p.profileurl || fallback.profileUrl };
+  } catch { return fallback; }
+}
+
 async function getStatus() {
   const [cpu, memory, swap, disk, cs2Process, query] = await Promise.all([
     getCpuUsage(),
@@ -369,12 +467,7 @@ async function serveStatic(req, res) {
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": corsOriginFor(req),
-      "Vary": "Origin",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
-    });
+    res.writeHead(204, corsHeaders(req));
     res.end();
     return;
   }
@@ -414,6 +507,42 @@ const server = http.createServer(async (req, res) => {
       // No profile store yet — the site falls back to preview data.
       sendJson(req, res, 200, { available: false, count: 0, players: [] });
     }
+    return;
+  }
+
+  // ---- Steam Sign-In ----
+  if (req.url?.startsWith("/api/auth/steam/login")) {
+    const u = new URL(req.url, SELF_URL);
+    const redirect = validRedirect(u.searchParams.get("redirect") || `${SITE_URL}/profile.html`);
+    const returnTo = `${SELF_URL}/api/auth/steam/return?redirect=${encodeURIComponent(redirect)}`;
+    res.writeHead(302, { Location: steamLoginRedirect(returnTo) });
+    res.end();
+    return;
+  }
+
+  if (req.url?.startsWith("/api/auth/steam/return")) {
+    const u = new URL(req.url, SELF_URL);
+    const redirect = validRedirect(u.searchParams.get("redirect") || `${SITE_URL}/profile.html`);
+    let steamId = null;
+    try { steamId = await verifySteamReturn(u.searchParams); } catch {}
+    if (!steamId) { res.writeHead(302, { Location: `${redirect}?login=failed` }); res.end(); return; }
+    const user = await fetchSteamSummary(steamId);
+    const token = signSession({ ...user, exp: Date.now() + SESSION_TTL_MS });
+    res.writeHead(302, { "Set-Cookie": sessionCookie(token, Math.floor(SESSION_TTL_MS / 1000)), Location: `${redirect}?login=ok` });
+    res.end();
+    return;
+  }
+
+  if (req.url?.startsWith("/api/auth/logout")) {
+    sendJson(req, res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", 0) });
+    return;
+  }
+
+  if (req.url?.startsWith("/api/auth/me")) {
+    const s = verifySession(getCookie(req, "zm_session"));
+    sendJson(req, res, 200, s
+      ? { authenticated: true, steamId: s.steamId, name: s.name, avatar: s.avatar, profileUrl: s.profileUrl }
+      : { authenticated: false });
     return;
   }
 

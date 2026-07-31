@@ -44,25 +44,43 @@
       <div class="section-head">
         <p class="eyebrow">Your Account</p>
         <h2>Survivor Cabinet</h2>
-        <p>Sign in with Steam to track your level, XP, ammo packs, achievements and weapon mastery — synced from your in-game profile.</p>
+        <p>Sign in with Steam to link your account. Level, XP, ammo packs, achievements and weapon mastery will sync here from your in-game profile.</p>
       </div>
 
       <div class="split">
-        <!-- login gateway -->
-        <div class="card">
-          <div class="panel-head"><h3>Sign In</h3></div>
-          <div style="padding:26px 22px;text-align:center">
-            <div class="ud-icon" style="margin:0 auto 16px;color:#7db0e6;background:rgba(125,176,230,.08);border-color:rgba(125,176,230,.28)"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-9.9 8.7l5.4 2.2a2.8 2.8 0 0 1 1.6-.5h.2l2.4-3.5v-.1a3.7 3.7 0 1 1 3.7 3.7h-.1l-3.4 2.4v.2a2.8 2.8 0 0 1-5.6.2l-3.9-1.6A10 10 0 1 0 12 2Z"/></svg></div>
-            <p class="muted" style="max-width:340px;margin:0 auto 18px">Steam OpenID login keeps it simple — no password, just your Steam account.</p>
-            <button class="btn btn--steam btn--block" data-steam-login>
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-9.9 8.7l5.4 2.2a2.8 2.8 0 0 1 1.6-.5l2.6-3.7a3.7 3.7 0 1 1 3.7 3.7l-3.6 2.6a2.8 2.8 0 0 1-5.5.8l-3.9-1.6A10 10 0 1 0 12 2Z"/></svg>
-              Sign in through Steam
-            </button>
-            <span class="ud-badge" style="margin-top:16px"><span class="live-dot" style="background:var(--amber)"></span>Login — under development</span>
+        <!-- LEFT: login gateway OR signed-in identity -->
+        <div>
+          <!-- logged OUT -->
+          <div class="card" data-login-card>
+            <div class="panel-head"><h3>Sign In</h3></div>
+            <div style="padding:26px 22px;text-align:center">
+              <div class="ud-icon" style="margin:0 auto 16px;color:#7db0e6;background:rgba(125,176,230,.08);border-color:rgba(125,176,230,.28)"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-9.9 8.7l5.4 2.2a2.8 2.8 0 0 1 1.6-.5h.2l2.4-3.5v-.1a3.7 3.7 0 1 1 3.7 3.7h-.1l-3.4 2.4v.2a2.8 2.8 0 0 1-5.6.2l-3.9-1.6A10 10 0 1 0 12 2Z"/></svg></div>
+              <p class="muted" style="max-width:340px;margin:0 auto 18px">Steam OpenID login — no password, just your Steam account. We only read your public profile.</p>
+              <a class="btn btn--steam btn--block" data-steam-login href="#">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-9.9 8.7l5.4 2.2a2.8 2.8 0 0 1 1.6-.5l2.6-3.7a3.7 3.7 0 1 1 3.7 3.7l-3.6 2.6a2.8 2.8 0 0 1-5.5.8l-3.9-1.6A10 10 0 1 0 12 2Z"/></svg>
+                Sign in through Steam
+              </a>
+              <p class="muted hidden" data-login-error style="margin-top:14px;color:var(--red-soft)">Sign-in failed — please try again.</p>
+            </div>
+          </div>
+
+          <!-- logged IN -->
+          <div class="card hidden" data-user-card>
+            <div class="panel-head"><h3>Signed In</h3><a href="#" class="preview-badge" data-logout style="cursor:pointer">Log out</a></div>
+            <div class="card-pad">
+              <div class="profile-hero" style="grid-template-columns:auto 1fr;align-items:center">
+                <img data-user-avatar alt="avatar" width="88" height="88" style="border-radius:16px;border:1px solid var(--line-red);background:var(--panel-2)">
+                <div>
+                  <div style="font-family:var(--font-head);font-size:24px;text-transform:uppercase;letter-spacing:.02em" data-user-name>Survivor</div>
+                  <div class="muted mono" style="font-size:12px;margin:4px 0 10px">SteamID <span data-user-steamid>—</span></div>
+                  <a class="btn btn--ghost btn--sm" data-user-steamurl href="#" target="_blank" rel="noopener">Steam profile ↗</a>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- what your cabinet will show (preview) -->
+        <!-- RIGHT: profile preview -->
         <div class="card">
           <div class="panel-head">
             <h3>Your Profile Preview</h3>
@@ -70,11 +88,9 @@
           </div>
           <div class="card-pad">
             <div class="profile-hero" style="margin-bottom:18px">
-              <div class="ring" style="--p:64">
-                <div class="ring-in"><b>12</b><span>Level</span></div>
-              </div>
+              <div class="ring" style="--p:64"><div class="ring-in"><b>12</b><span>Level</span></div></div>
               <div>
-                <div style="font-family:var(--font-head);font-size:24px;text-transform:uppercase;letter-spacing:.03em">Your Nickname</div>
+                <div style="font-family:var(--font-head);font-size:20px;text-transform:uppercase">Progression</div>
                 <div class="muted" style="font-size:13px;margin:2px 0 12px">Prestige 1 · 4,820 XP · 640 ammo packs</div>
                 <div class="meter-track" style="max-width:280px"><div class="meter-fill" style="width:64%"></div></div>
                 <div class="muted" style="font-size:12px;margin-top:6px">64% to level 13</div>
@@ -90,13 +106,13 @@
         </div>
       </div>
 
-      <!-- under development detail -->
+      <!-- stats under development -->
       <div class="card" style="margin-top:22px">
         <div class="under-dev">
           <div class="ud-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M6 21V9l6-4 6 4v12M9 21v-4h6v4"/></svg></div>
-          <h3>This page is temporarily under development</h3>
-          <p>Steam login and the live personal cabinet (achievements, weapon mastery and daily contracts pulled from your server profile) are being wired up. Live server status and the leaderboard are already running.</p>
-          <span class="ud-badge"><span class="live-dot" style="background:var(--amber)"></span>Coming soon</span>
+          <h3>Gameplay stats are under development</h3>
+          <p>Steam sign-in is live. Your personal stats (level, XP, achievements, weapon mastery and daily contracts) will appear here once server-side profile persistence is switched on. Live server status and the leaderboard are already running.</p>
+          <span class="ud-badge"><span class="live-dot" style="background:var(--amber)"></span>Stats syncing soon</span>
         </div>
       </div>
     </div>
@@ -116,12 +132,5 @@
   </footer>
 
   <script src="./app.js"></script>
-  <script>
-    document.querySelector("[data-steam-login]")?.addEventListener("click", function () {
-      var t = document.querySelector(".toast") || Object.assign(document.body.appendChild(document.createElement("div")), { className: "toast" });
-      t.textContent = "Steam login is under development"; t.classList.add("show");
-      setTimeout(function () { t.classList.remove("show"); }, 1900);
-    });
-  </script>
 </body>
 </html>

@@ -31,9 +31,10 @@ async function loadConfig() {
   apiBase = (host === "localhost" || host === "127.0.0.1") ? "" : DEFAULT_API_BASE;
 }
 
+function apiUrl(path) { return `${apiBase.replace(/\/$/, "")}${path}`; }
+
 async function api(path) {
-  const base = apiBase.replace(/\/$/, "");
-  const r = await fetch(`${base}${path}`, { cache: "no-store" });
+  const r = await fetch(apiUrl(path), { cache: "no-store" });
   if (!r.ok) throw new Error(`API ${r.status}`);
   return r.json();
 }
@@ -280,6 +281,50 @@ function togglePreview(sel, on) { const el = $(sel); if (el) el.classList.toggle
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
 /* ============================================================
+   Cabinet: Steam sign-in
+   ============================================================ */
+async function initProfile() {
+  refreshStatus(); setInterval(refreshStatus, 8000);
+
+  const loginBtn = $("[data-steam-login]");
+  if (loginBtn) {
+    const redirect = `${location.origin}/profile.html`;
+    loginBtn.href = apiUrl(`/api/auth/steam/login?redirect=${encodeURIComponent(redirect)}`);
+  }
+
+  // reflect ?login=failed and clean the query string
+  const params = new URLSearchParams(location.search);
+  if (params.get("login") === "failed") $("[data-login-error]")?.classList.remove("hidden");
+  if (params.has("login")) history.replaceState({}, "", location.pathname);
+
+  let me = { authenticated: false };
+  try {
+    const r = await fetch(apiUrl("/api/auth/me"), { credentials: "include", cache: "no-store" });
+    me = await r.json();
+  } catch {}
+
+  const loginCard = $("[data-login-card]");
+  const userCard = $("[data-user-card]");
+  if (me.authenticated) {
+    setText("[data-user-name]", me.name || "Survivor");
+    setText("[data-user-steamid]", me.steamId || "—");
+    const av = $("[data-user-avatar]"); if (av && me.avatar) av.src = me.avatar;
+    const url = $("[data-user-steamurl]"); if (url) url.href = me.profileUrl || `https://steamcommunity.com/profiles/${me.steamId}`;
+    loginCard?.classList.add("hidden");
+    userCard?.classList.remove("hidden");
+  } else {
+    loginCard?.classList.remove("hidden");
+    userCard?.classList.add("hidden");
+  }
+
+  $("[data-logout]")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    try { await fetch(apiUrl("/api/auth/logout"), { credentials: "include" }); } catch {}
+    location.href = "./profile.html";
+  });
+}
+
+/* ============================================================
    boot
    ============================================================ */
 loadConfig().then(() => {
@@ -287,5 +332,6 @@ loadConfig().then(() => {
   const page = document.body.dataset.page;
   if (page === "home") initHome();
   else if (page === "leaderboard") initLeaderboardPage();
-  else { refreshStatus(); setInterval(refreshStatus, 8000); } // profile & others still show live pill
+  else if (page === "profile") initProfile();
+  else { refreshStatus(); setInterval(refreshStatus, 8000); } // other pages still show live pill
 });

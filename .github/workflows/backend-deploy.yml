@@ -32,7 +32,7 @@ jobs:
           host: ${{ env.VPS_HOST }}
           username: ${{ env.VPS_USER }}
           password: ${{ env.VPS_PASSWORD }}
-          source: "server.js,package.json,public"
+          source: "server.js,package.json"
           target: "/opt/cs2-monitor/app"
           overwrite: true
 
