@@ -288,25 +288,49 @@ function renderLeaderboard(rows, host, teaser) {
 /* ============================================================
    Leaderboard page: search + sort
    ============================================================ */
+async function refreshLB() {
+  try { const d = await api("/api/leaderboard"); window.__LB = { rows: d.players || [] }; }
+  catch { window.__LB = { rows: [] }; }
+}
+
 function initLeaderboardPage() {
   refreshStatus(); setInterval(refreshStatus, 8000);
   const host = $("[data-lb-full]");
   if (!host) return;
-  loadLeaderboard(host, 0, false);
 
   let sortKey = "experience", query = "";
   const apply = () => {
     const data = window.__LB?.rows || [];
-    let rows = data.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
-    rows = rows.slice().sort((a, b) => (b[sortKey] || 0) - (a[sortKey] || 0));
-    renderLeaderboard(rows, host, false);
+    const rows = data
+      .filter((p) => (p.name || "").toLowerCase().includes(query.toLowerCase()))
+      .slice().sort((a, b) => (b[sortKey] || 0) - (a[sortKey] || 0))
+      .map((p, i) => ({ ...p, _rank: i + 1 }));
+    renderPaged("lb-full", rows, {
+      perPage: 12, hostSel: "[data-lb-full]", pagerSel: "[data-lb-pager]", cols: 7,
+      emptyMsg: query ? "No survivors match your search." : "No ranked survivors yet.",
+      rowMapper: (p) => `
+        <tr>
+          <td class="rank ${rankClass(p._rank - 1)}">${medal(p._rank - 1)}</td>
+          <td><div class="pname"><span class="pav">${initials(p.name)}</span>${escapeHtml(p.name)}</div></td>
+          <td><span class="lvl">LVL ${p.level}${p.prestige ? ` · P${p.prestige}` : ""}</span></td>
+          <td class="num pscore">${fmtInt(p.experience)}</td>
+          <td class="num">${fmtInt(p.totalKills)}</td>
+          <td class="num">${fmtInt(p.infections)}</td>
+          <td class="num">${fmtInt(p.totalWins)}</td>
+        </tr>`
+    });
   };
+
+  refreshLB().then(apply);
+
   const search = $("[data-lb-search]");
-  if (search) search.addEventListener("input", (e) => { query = e.target.value; apply(); });
+  if (search) search.addEventListener("input", (e) => { query = e.target.value; PAGER["lb-full"] = 1; apply(); });
   $$("[data-sort]").forEach((btn) => btn.addEventListener("click", () => {
     $$("[data-sort]").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active"); sortKey = btn.dataset.sort; apply();
+    btn.classList.add("active"); sortKey = btn.dataset.sort; PAGER["lb-full"] = 1; apply();
   }));
+
+  setInterval(() => refreshLB().then(apply), 20000);
 }
 
 /* ============================================================
