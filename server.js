@@ -19,14 +19,41 @@ const SERVER_NAME = process.env.SERVER_NAME || "CS2-ZM-Test";
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 const MAP_ASSET_BASE = process.env.MAP_ASSET_BASE || "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images";
 
+// CORS_ORIGIN may be "*", a single origin, or a comma-separated allowlist.
+const ALLOWED_ORIGINS = CORS_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
+const ALLOW_ANY_ORIGIN = ALLOWED_ORIGINS.includes("*");
+
 let lastCpu = null;
 
-function sendJson(res, status, payload) {
+// Local dev frontends (localhost / 127.0.0.1 / ::1 on any port) are always allowed,
+// so a developer can run the page locally without loosening the production allowlist.
+function isLocalhostOrigin(origin) {
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+// Reflect the request's Origin when it is allowed; otherwise fall back to the
+// first configured origin so production behaviour is unchanged.
+function corsOriginFor(req) {
+  if (ALLOW_ANY_ORIGIN) return "*";
+  const origin = req.headers.origin;
+  if (origin && (ALLOWED_ORIGINS.includes(origin) || isLocalhostOrigin(origin))) {
+    return origin;
+  }
+  return ALLOWED_ORIGINS[0] || "*";
+}
+
+function sendJson(req, res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": CORS_ORIGIN,
+    "Access-Control-Allow-Origin": corsOriginFor(req),
+    "Vary": "Origin",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Length": Buffer.byteLength(body)
@@ -266,7 +293,8 @@ async function serveStatic(req, res) {
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "Access-Control-Allow-Origin": CORS_ORIGIN,
+      "Access-Control-Allow-Origin": corsOriginFor(req),
+      "Vary": "Origin",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type"
     });
@@ -275,15 +303,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url?.startsWith("/api/health")) {
-    sendJson(res, 200, { ok: true, updatedAt: new Date().toISOString() });
+    sendJson(req, res, 200, { ok: true, updatedAt: new Date().toISOString() });
     return;
   }
 
   if (req.url?.startsWith("/api/status")) {
     try {
-      sendJson(res, 200, await getStatus());
+      sendJson(req, res, 200, await getStatus());
     } catch (error) {
-      sendJson(res, 500, { error: error.message });
+      sendJson(req, res, 500, { error: error.message });
     }
     return;
   }
