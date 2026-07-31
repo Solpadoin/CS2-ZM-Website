@@ -10,6 +10,7 @@ const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
 
+const VERSION = "1.1.0";
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const CS2_HOST = process.env.CS2_HOST || "127.0.0.1";
@@ -303,7 +304,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url?.startsWith("/api/health")) {
-    sendJson(req, res, 200, { ok: true, updatedAt: new Date().toISOString() });
+    sendJson(req, res, 200, { ok: true, version: VERSION, updatedAt: new Date().toISOString() });
     return;
   }
 
