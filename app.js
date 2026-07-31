@@ -252,6 +252,7 @@ function renderLeaderboard(rows, host, teaser) {
    Leaderboard page: search + sort
    ============================================================ */
 function initLeaderboardPage() {
+  refreshStatus(); setInterval(refreshStatus, 8000);
   const host = $("[data-lb-full]");
   if (!host) return;
   loadLeaderboard(host, 0, false);
@@ -325,13 +326,146 @@ async function initProfile() {
 }
 
 /* ============================================================
+   Admin (staff panel)
+   ============================================================ */
+let ADMIN_PERMS = null;
+function adminApi(path, opts = {}) {
+  return fetch(apiUrl(path), { credentials: "include", cache: "no-store", ...opts });
+}
+const teamName = (t) => t === 3 ? "CT" : t === 2 ? "Zombie" : "—";
+function fmtClock(unixSec) {
+  return new Date((unixSec || 0) * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+async function setupAdminNav() {
+  let me;
+  try { me = await (await adminApi("/api/admin/me")).json(); } catch { return; }
+  if (!me || !me.isAdmin) return;
+  ADMIN_PERMS = me.perms || {};
+  const link = $('.nav-links a[data-nav="profile"]');
+  if (!link || $(".cab-menu")) return;
+  const wrap = document.createElement("div");
+  wrap.className = "cab-menu";
+  wrap.innerHTML = `<a href="#" data-nav="profile">Cabinet ▾</a>
+    <div class="cab-menu-list"><a href="./profile.html">Profile</a><a href="./admin.html">Administration</a></div>`;
+  link.replaceWith(wrap);
+  const toggle = $("a", wrap), list = $(".cab-menu-list", wrap);
+  toggle.addEventListener("click", (e) => { e.preventDefault(); list.classList.toggle("open"); });
+  document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) list.classList.remove("open"); });
+}
+
+function actionButtons(steamId, name, offline) {
+  const b = [];
+  if (!offline && ADMIN_PERMS?.kick) b.push(`<button class="btn btn--ghost btn--tiny" data-act="kick" data-sid="${steamId}" data-name="${escapeHtml(name)}">Kick</button>`);
+  if (ADMIN_PERMS?.ban) b.push(`<button class="btn btn--danger btn--tiny" data-act="ban" data-sid="${steamId}" data-name="${escapeHtml(name)}">Ban</button>`);
+  if (offline && ADMIN_PERMS?.unban) b.push(`<button class="btn btn--ghost btn--tiny" data-act="unban" data-sid="${steamId}" data-name="${escapeHtml(name)}">Unban</button>`);
+  return b.join(" ") || '<span class="muted" style="font-size:12px">—</span>';
+}
+
+async function loadAdminData() {
+  try {
+    const [players, chat, log] = await Promise.all([
+      adminApi("/api/admin/players").then(r => r.json()),
+      adminApi("/api/admin/chat").then(r => r.json()),
+      adminApi("/api/admin/log").then(r => r.json())
+    ]);
+    const online = players.online || [];
+    setText("[data-admin-online-count]", `${online.length} online`);
+    $("[data-admin-online]").innerHTML = online.length ? online.map(p => `
+      <tr><td><div class="pname"><span class="pav">${initials(p.name)}</span>${escapeHtml(p.name)}</div></td>
+      <td class="muted">${teamName(p.team)}</td>
+      <td class="num">${actionButtons(String(p.steamId), p.name, false)}</td></tr>`).join("")
+      : emptyRow(3, "No players online.");
+
+    const recent = players.recent || [];
+    $("[data-admin-recent]").innerHTML = recent.length ? recent.map(p => `
+      <tr><td><div class="pname"><span class="pav">${initials(p.name || "?")}</span>${escapeHtml(p.name || p.steamId)}</div></td>
+      <td class="num">${actionButtons(String(p.steamId), p.name || String(p.steamId), true)}</td></tr>`).join("")
+      : emptyRow(2, "No players in the last hour.");
+
+    const msgs = chat.messages || [];
+    const ch = $("[data-admin-chat]");
+    ch.innerHTML = msgs.length ? msgs.map(m => `
+      <div class="chat-line"><span class="ct">${fmtClock(m.t)}</span>
+      <span class="cn ${m.team === 3 ? "" : "t2"}">${escapeHtml(m.name)}${m.teamOnly ? " (team)" : ""}:</span>
+      <span class="cx">${escapeHtml(m.text)}</span></div>`).join("")
+      : `<p class="muted" style="text-align:center;padding:24px">No chat in the last 30 minutes.</p>`;
+    ch.scrollTop = ch.scrollHeight;
+
+    const entries = log.entries || [];
+    $("[data-admin-log]").innerHTML = entries.length ? entries.map(e => `
+      <div class="log-entry"><span class="la ${e.action}">${escapeHtml(e.action)}</span>
+      <b> ${escapeHtml(String(e.targetSteamId))}</b> · <span class="lm">${escapeHtml(e.result || "")}</span><br>
+      <span class="lm">by ${escapeHtml(e.adminName || "?")} · ${fmtClock(e.t)} · "${escapeHtml(e.reason || "")}"</span></div>`).join("")
+      : `<p class="muted" style="text-align:center;padding:24px">No actions yet.</p>`;
+  } catch {}
+}
+
+function initAdminModal() {
+  const modal = $("[data-admin-modal]");
+  let cur = { action: "", steamId: "", name: "" };
+  const durWrap = $("[data-modal-duration-wrap]");
+  const reasonInput = $("[data-modal-reason]");
+  const errEl = $("[data-modal-error]");
+  const close = () => modal.classList.add("hidden");
+
+  window.__openAction = (action, steamId, name) => {
+    cur = { action, steamId, name };
+    setText("[data-modal-title]", action.charAt(0).toUpperCase() + action.slice(1) + " player");
+    setText("[data-modal-target]", `${name} · ${steamId}`);
+    reasonInput.value = ""; errEl.classList.add("hidden");
+    durWrap.classList.toggle("hidden", action !== "ban");
+    $$("[data-dur]").forEach(b => b.classList.toggle("active", b.dataset.dur === "0"));
+    modal.classList.remove("hidden");
+  };
+  $("[data-modal-close]").addEventListener("click", (e) => { e.preventDefault(); close(); });
+  modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+  $$("[data-reason-preset]").forEach(b => b.addEventListener("click", () => { reasonInput.value = b.dataset.reasonPreset; }));
+  $$("[data-dur]").forEach(b => b.addEventListener("click", () => { $$("[data-dur]").forEach(x => x.classList.remove("active")); b.classList.add("active"); }));
+
+  $("[data-modal-confirm]").addEventListener("click", async () => {
+    const reason = reasonInput.value.trim().slice(0, 80);
+    if (!reason) { errEl.textContent = "Please provide a reason."; errEl.classList.remove("hidden"); return; }
+    const minutes = cur.action === "ban" ? Number($("[data-dur].active")?.dataset.dur || 0) : 0;
+    try {
+      const r = await adminApi("/api/admin/action", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: cur.action, targetSteamId: cur.steamId, reason, minutes })
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { errEl.textContent = j.error || "Action failed."; errEl.classList.remove("hidden"); return; }
+      close(); toast(`${cur.action} sent`); setTimeout(loadAdminData, 800);
+    } catch { errEl.textContent = "Network error."; errEl.classList.remove("hidden"); }
+  });
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (btn) window.__openAction(btn.dataset.act, btn.dataset.sid, btn.dataset.name);
+  });
+}
+
+async function initAdminPage() {
+  refreshStatus(); setInterval(refreshStatus, 8000);
+  let me;
+  try { me = await (await adminApi("/api/admin/me")).json(); } catch { me = { isAdmin: false }; }
+  if (!me.isAdmin) { $("[data-admin-denied]").classList.remove("hidden"); return; }
+  ADMIN_PERMS = me.perms || {};
+  $("[data-admin-body]").classList.remove("hidden");
+  initAdminModal();
+  loadAdminData();
+  setInterval(loadAdminData, 5000);
+}
+
+/* ============================================================
    boot
    ============================================================ */
 loadConfig().then(() => {
   initChrome();
+  setupAdminNav();
   const page = document.body.dataset.page;
   if (page === "home") initHome();
   else if (page === "leaderboard") initLeaderboardPage();
   else if (page === "profile") initProfile();
+  else if (page === "admin") initAdminPage();
   else { refreshStatus(); setInterval(refreshStatus, 8000); } // other pages still show live pill
 });

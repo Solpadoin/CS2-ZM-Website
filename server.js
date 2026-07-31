@@ -11,7 +11,7 @@ const crypto = require("node:crypto");
 
 const execFileAsync = promisify(execFile);
 
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 const PORT = Number(process.env.PORT || 3000);
 // Frontend lives in the repo root (GitHub Pages serves the site). Locally this
 // lets `node server.js` preview the site; on the API host it only holds
@@ -36,6 +36,10 @@ const SITE_URL = process.env.SITE_URL || "https://zm2.ghostbe.site";   // fronte
 const SELF_URL = process.env.SELF_URL || "https://api.zm2.ghostbe.site"; // this API origin (OpenID realm)
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || ".ghostbe.site";     // shared across sub-domains
 const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
+
+// --- Admin bridge (website -> plugin) ---
+const ADMINS_PATH = process.env.ADMINS_PATH || "/opt/cs2/server/game/csgo/addons/cs2fixes/configs/admins.jsonc";
+const ADMIN_DATA_DIR = process.env.ADMIN_DATA_DIR || "/opt/cs2/server/game/csgo/addons/cs2fixes/data";
 
 // CORS_ORIGIN may be "*", a single origin, or a comma-separated allowlist.
 const ALLOWED_ORIGINS = CORS_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
@@ -396,6 +400,70 @@ async function fetchSteamSummary(steamId) {
   } catch { return fallback; }
 }
 
+// ---- admin bridge helpers ----
+function stripJsonc(text) {
+  // admins.jsonc uses // comments and no URLs/`//` inside strings, so this is safe.
+  return text.replace(/^\s*\/\/.*$/gm, "").replace(/\/\/[^\n"]*$/gm, "");
+}
+async function readAdmins() {
+  try {
+    const data = JSON.parse(stripJsonc(await fs.readFile(ADMINS_PATH, "utf8")));
+    return data && typeof data.Admins === "object" ? data.Admins : {};
+  } catch { return {}; }
+}
+async function getAdmin(steamId) {
+  if (!steamId) return null;
+  const entry = (await readAdmins())[String(steamId)];
+  if (!entry) return null;
+  const flags = String(entry.flags || "");
+  const root = flags.includes("z");
+  return {
+    name: entry.name || "",
+    perms: {
+      kick: root || flags.includes("c"),
+      ban: root || flags.includes("d"),
+      unban: root || flags.includes("e"),
+      root
+    }
+  };
+}
+async function requireAdmin(req) {
+  const s = verifySession(getCookie(req, "zm_session"));
+  if (!s || !s.steamId) return null;
+  const admin = await getAdmin(s.steamId);
+  if (!admin) return null;
+  return { steamId: String(s.steamId), name: s.name || admin.name, perms: admin.perms };
+}
+function csrfOk(req) {
+  // Credentialed admin POSTs must come from our own site origin (blocks cross-site CSRF).
+  return (req.headers.origin || "") === SITE_URL;
+}
+async function readAdminData(file, fallback) {
+  try { return JSON.parse(await fs.readFile(path.join(ADMIN_DATA_DIR, file), "utf8")); }
+  catch { return fallback; }
+}
+function readRequestBody(req, limit = 8192) {
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (c) => { data += c; if (data.length > limit) { req.destroy(); resolve(null); } });
+    req.on("end", () => resolve(data));
+    req.on("error", () => resolve(null));
+  });
+}
+async function enqueueAdminCommand(cmd) {
+  const file = path.join(ADMIN_DATA_DIR, "admin_commands.json");
+  let queue = { commands: [] };
+  try {
+    const j = JSON.parse(await fs.readFile(file, "utf8"));
+    if (Array.isArray(j.commands)) queue = j;
+  } catch {}
+  queue.commands.push(cmd);
+  await fs.writeFile(file, JSON.stringify(queue), "utf8");
+  // Let the plugin (steam user) read and clear the queue.
+  try { await execFileAsync("chown", ["steam:steam", file]); } catch {}
+  try { await fs.chmod(file, 0o664); } catch {}
+}
+
 async function getStatus() {
   const [cpu, memory, swap, disk, cs2Process, query] = await Promise.all([
     getCpuUsage(),
@@ -543,6 +611,81 @@ const server = http.createServer(async (req, res) => {
     sendJson(req, res, 200, s
       ? { authenticated: true, steamId: s.steamId, name: s.name, avatar: s.avatar, profileUrl: s.profileUrl }
       : { authenticated: false });
+    return;
+  }
+
+  // ---- Admin bridge (all require an authenticated admin session) ----
+  if (req.url?.startsWith("/api/admin/me")) {
+    const auth = await requireAdmin(req);
+    sendJson(req, res, 200, auth
+      ? { isAdmin: true, steamId: auth.steamId, name: auth.name, perms: auth.perms }
+      : { isAdmin: false });
+    return;
+  }
+
+  if (req.url?.startsWith("/api/admin/players")) {
+    const auth = await requireAdmin(req);
+    if (!auth) { sendJson(req, res, 403, { error: "forbidden" }); return; }
+    const online = await readAdminData("players_online.json", { players: [] });
+    const cutoff = Math.floor(Date.now() / 1000) - 3600;
+    let recent = [];
+    try {
+      const profs = (await readAdminData("account_profiles.json", { profiles: [] })).profiles || [];
+      recent = profs
+        .filter((p) => (p.lastSeen || 0) >= cutoff)
+        .map((p) => ({ steamId: String(p.steamId), name: p.lastName || "", lastSeen: p.lastSeen || 0 }));
+    } catch {}
+    sendJson(req, res, 200, { online: online.players || [], recent });
+    return;
+  }
+
+  if (req.url?.startsWith("/api/admin/chat")) {
+    const auth = await requireAdmin(req);
+    if (!auth) { sendJson(req, res, 403, { error: "forbidden" }); return; }
+    const log = await readAdminData("chat_log.json", { messages: [] });
+    const cutoff = Math.floor(Date.now() / 1000) - 30 * 60;
+    const messages = (log.messages || []).filter((m) => (m.t || 0) >= cutoff);
+    sendJson(req, res, 200, { messages });
+    return;
+  }
+
+  if (req.url?.startsWith("/api/admin/log")) {
+    const auth = await requireAdmin(req);
+    if (!auth) { sendJson(req, res, 403, { error: "forbidden" }); return; }
+    const log = await readAdminData("admin_log.json", { entries: [] });
+    sendJson(req, res, 200, { entries: (log.entries || []).slice(-100).reverse() });
+    return;
+  }
+
+  if (req.url?.startsWith("/api/admin/action")) {
+    if (req.method !== "POST") { sendJson(req, res, 405, { error: "method" }); return; }
+    if (!csrfOk(req)) { sendJson(req, res, 403, { error: "bad origin" }); return; }
+    const auth = await requireAdmin(req);
+    if (!auth) { sendJson(req, res, 403, { error: "forbidden" }); return; }
+
+    let body;
+    try { body = JSON.parse((await readRequestBody(req)) || "{}"); } catch { body = null; }
+    if (!body) { sendJson(req, res, 400, { error: "bad body" }); return; }
+
+    const action = String(body.action || "");
+    const targetSteamId = String(body.targetSteamId || "");
+    let reason = String(body.reason || "").slice(0, 80).trim();
+    const minutes = Math.max(0, Math.min(525600, parseInt(body.minutes, 10) || 0));
+
+    if (!["kick", "ban", "unban"].includes(action)) { sendJson(req, res, 400, { error: "bad action" }); return; }
+    if (!/^\d{17}$/.test(targetSteamId)) { sendJson(req, res, 400, { error: "bad steamid" }); return; }
+    const need = action === "kick" ? "kick" : action === "unban" ? "unban" : "ban";
+    if (!auth.perms[need]) { sendJson(req, res, 403, { error: "no permission" }); return; }
+    if (!reason) reason = "No reason given";
+
+    await enqueueAdminCommand({
+      id: crypto.randomUUID(),
+      action, targetSteamId, minutes, reason,
+      adminSteamId: auth.steamId,
+      adminName: auth.name,
+      createdAt: Date.now()
+    });
+    sendJson(req, res, 200, { ok: true });
     return;
   }
 
