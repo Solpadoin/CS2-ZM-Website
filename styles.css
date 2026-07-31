@@ -359,6 +359,15 @@ body {
   font-family: var(--font-head); text-transform: uppercase; letter-spacing: .05em; font-size: 13px; }
 .cab-menu-list a:hover { background: rgba(255,59,59,.08); color: var(--red-soft); }
 
+/* ---------- pagination ---------- */
+.pager { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.pager .muted { font-family: var(--font-head); font-size: 12.5px; letter-spacing: .08em; }
+.pager button[disabled] { opacity: .35; pointer-events: none; }
+.admin-pager-bar { display: flex; justify-content: center; padding: 12px; border-top: 1px solid var(--line); min-height: 20px; }
+.admin-pager-bar:empty { padding: 0; border-top: 0; }
+.ptable tr.pad-row td { color: transparent; }
+.ptable tr.pad-row:hover { background: transparent; }
+
 /* ---------- utilities ---------- */
 .mono { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }

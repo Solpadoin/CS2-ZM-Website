@@ -9,6 +9,49 @@ const MAP_BASE = "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/i
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+/* ---------- pagination (shared) ---------- */
+const PAGER = {};        // key -> current page
+const PAGER_CFG = {};    // key -> render config + data
+function padRow(cols) { return `<tr class="pad-row"><td colspan="${cols}">&nbsp;</td></tr>`; }
+function pagerControls(key, page, pages) {
+  return `<div class="pager">
+    <button class="btn btn--ghost btn--tiny" data-pager="${key}" data-dir="-1"${page <= 1 ? " disabled" : ""}>‹</button>
+    <span class="muted">${page} / ${pages}</span>
+    <button class="btn btn--ghost btn--tiny" data-pager="${key}" data-dir="1"${page >= pages ? " disabled" : ""}>›</button></div>`;
+}
+function renderPaged(key, rows, cfg) { PAGER_CFG[key] = { rows, ...cfg }; renderPagedFromCache(key); }
+function renderPagedFromCache(key) {
+  const c = PAGER_CFG[key];
+  if (!c) return;
+  const per = c.perPage;
+  const pages = Math.max(1, Math.ceil(c.rows.length / per));
+  let page = PAGER[key] || 1;
+  if (page > pages) page = pages;
+  if (page < 1) page = 1;
+  PAGER[key] = page;
+  const slice = c.rows.slice((page - 1) * per, page * per);
+  const host = $(c.hostSel);
+  if (host) {
+    if (c.div) {
+      host.innerHTML = slice.length ? slice.map(c.rowMapper).join("")
+        : `<p class="muted" style="text-align:center;padding:24px">${escapeHtml(c.emptyMsg)}</p>`;
+    } else {
+      let body = slice.length ? slice.map(c.rowMapper).join("") : emptyRow(c.cols, c.emptyMsg);
+      for (let i = (slice.length || 1); i < per; i++) body += padRow(c.cols);
+      host.innerHTML = body;
+    }
+  }
+  const pg = $(c.pagerSel);
+  if (pg) pg.innerHTML = pages > 1 ? pagerControls(key, page, pages) : "";
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-pager]");
+  if (!b) return;
+  const key = b.dataset.pager;
+  PAGER[key] = (PAGER[key] || 1) + Number(b.dataset.dir);
+  renderPagedFromCache(key);
+});
+
 let apiBase = "";
 
 /* ---------- api base resolution (same logic as before) ---------- */
@@ -205,19 +248,21 @@ async function loadPlayers() {
     rows = data.players || [];
   } catch { rows = []; }
   if (!rows.length) { rows = DEMO_PLAYERS; preview = true; }
+  rows = rows.slice().sort((a, b) => (b.score || 0) - (a.score || 0)).map((p, i) => ({ ...p, _rank: i + 1 }));
   const count = $("[data-players-count]");
   if (count) count.textContent = `${rows.length} online`;
-  if (!rows.length) { host.innerHTML = emptyRow(4, "No players connected right now."); return; }
 
-  host.innerHTML = rows
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-    .map((p, i) => `
+  renderPaged("home-players", rows, {
+    perPage: 7, hostSel: "[data-players-table]", pagerSel: "[data-players-pager]", cols: 4,
+    emptyMsg: "No players connected right now.",
+    rowMapper: (p) => `
       <tr>
-        <td class="rank ${rankClass(i)}">${i + 1}</td>
+        <td class="rank ${rankClass(p._rank - 1)}">${p._rank}</td>
         <td><div class="pname"><span class="pav">${initials(p.name)}</span>${escapeHtml(p.name)}</div></td>
         <td class="num pscore">${fmtInt(p.score)}</td>
         <td class="num muted">${fmtDuration(p.duration)}</td>
-      </tr>`).join("");
+      </tr>`
+  });
 
   togglePreview("[data-players-preview]", preview);
 }
@@ -371,17 +416,21 @@ async function loadAdminData() {
     ]);
     const online = players.online || [];
     setText("[data-admin-online-count]", `${online.length} online`);
-    $("[data-admin-online]").innerHTML = online.length ? online.map(p => `
-      <tr><td><div class="pname"><span class="pav">${initials(p.name)}</span>${escapeHtml(p.name)}</div></td>
-      <td class="muted">${teamName(p.team)}</td>
-      <td class="num">${actionButtons(String(p.steamId), p.name, false)}</td></tr>`).join("")
-      : emptyRow(3, "No players online.");
+    renderPaged("adm-online", online, {
+      perPage: 8, hostSel: "[data-admin-online]", pagerSel: "[data-admin-online-pager]", cols: 3,
+      emptyMsg: "No players online.",
+      rowMapper: (p) => `<tr><td><div class="pname"><span class="pav">${initials(p.name)}</span>${escapeHtml(p.name)}</div></td>
+        <td class="muted">${teamName(p.team)}</td>
+        <td class="num">${actionButtons(String(p.steamId), p.name, false)}</td></tr>`
+    });
 
     const recent = players.recent || [];
-    $("[data-admin-recent]").innerHTML = recent.length ? recent.map(p => `
-      <tr><td><div class="pname"><span class="pav">${initials(p.name || "?")}</span>${escapeHtml(p.name || p.steamId)}</div></td>
-      <td class="num">${actionButtons(String(p.steamId), p.name || String(p.steamId), true)}</td></tr>`).join("")
-      : emptyRow(2, "No players in the last hour.");
+    renderPaged("adm-recent", recent, {
+      perPage: 8, hostSel: "[data-admin-recent]", pagerSel: "[data-admin-recent-pager]", cols: 2,
+      emptyMsg: "No players in the last hour.",
+      rowMapper: (p) => `<tr><td><div class="pname"><span class="pav">${initials(p.name || "?")}</span>${escapeHtml(p.name || p.steamId)}</div></td>
+        <td class="num">${actionButtons(String(p.steamId), p.name || String(p.steamId), true)}</td></tr>`
+    });
 
     const msgs = chat.messages || [];
     const ch = $("[data-admin-chat]");
@@ -393,11 +442,13 @@ async function loadAdminData() {
     ch.scrollTop = ch.scrollHeight;
 
     const entries = log.entries || [];
-    $("[data-admin-log]").innerHTML = entries.length ? entries.map(e => `
-      <div class="log-entry"><span class="la ${e.action}">${escapeHtml(e.action)}</span>
-      <b> ${escapeHtml(String(e.targetSteamId))}</b> · <span class="lm">${escapeHtml(e.result || "")}</span><br>
-      <span class="lm">by ${escapeHtml(e.adminName || "?")} · ${fmtClock(e.t)} · "${escapeHtml(e.reason || "")}"</span></div>`).join("")
-      : `<p class="muted" style="text-align:center;padding:24px">No actions yet.</p>`;
+    renderPaged("adm-log", entries, {
+      div: true, perPage: 8, hostSel: "[data-admin-log]", pagerSel: "[data-admin-log-pager]",
+      emptyMsg: "No actions yet.",
+      rowMapper: (e) => `<div class="log-entry"><span class="la ${escapeHtml(e.action)}">${escapeHtml(e.action)}</span>
+        <b> ${escapeHtml(String(e.targetSteamId))}</b> · <span class="lm">${escapeHtml(e.result || "")}</span><br>
+        <span class="lm">by ${escapeHtml(e.adminName || "?")} · ${fmtClock(e.t)} · "${escapeHtml(e.reason || "")}"</span></div>`
+    });
   } catch {}
 }
 

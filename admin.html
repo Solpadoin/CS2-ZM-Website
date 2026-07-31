@@ -63,6 +63,7 @@
               <thead><tr><th>Player</th><th>Team</th><th class="num">Actions</th></tr></thead>
               <tbody data-admin-online><tr><td colspan="3" style="text-align:center;color:var(--muted);padding:28px">Loading…</td></tr></tbody>
             </table>
+            <div class="admin-pager-bar" data-admin-online-pager></div>
           </div>
           <!-- last hour -->
           <div class="card">
@@ -71,6 +72,7 @@
               <thead><tr><th>Player</th><th class="num">Actions</th></tr></thead>
               <tbody data-admin-recent><tr><td colspan="2" style="text-align:center;color:var(--muted);padding:28px">Loading…</td></tr></tbody>
             </table>
+            <div class="admin-pager-bar" data-admin-recent-pager></div>
           </div>
         </div>
 
@@ -78,12 +80,13 @@
           <!-- chat -->
           <div class="card">
             <div class="panel-head"><h3>Server Chat · last 30 min</h3></div>
-            <div data-admin-chat style="max-height:340px;overflow-y:auto;padding:6px 4px"></div>
+            <div data-admin-chat style="height:342px;overflow-y:auto;padding:6px 4px"></div>
           </div>
           <!-- action log -->
           <div class="card">
             <div class="panel-head"><h3>Action Log</h3></div>
-            <div data-admin-log style="max-height:340px;overflow-y:auto;padding:6px 4px"></div>
+            <div data-admin-log style="height:300px;overflow-y:auto;padding:6px 4px"></div>
+            <div class="admin-pager-bar" data-admin-log-pager></div>
           </div>
         </div>
       </div>
