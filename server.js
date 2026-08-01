@@ -11,7 +11,7 @@ const crypto = require("node:crypto");
 
 const execFileAsync = promisify(execFile);
 
-const VERSION = "1.5.0";
+const VERSION = "1.6.0";
 const PORT = Number(process.env.PORT || 3000);
 // Frontend lives in the repo root (GitHub Pages serves the site). Locally this
 // lets `node server.js` preview the site; on the API host it only holds
@@ -40,6 +40,7 @@ const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 // --- Admin bridge (website -> plugin) ---
 const ADMINS_PATH = process.env.ADMINS_PATH || "/opt/cs2/server/game/csgo/addons/cs2fixes/configs/admins.jsonc";
 const ADMIN_DATA_DIR = process.env.ADMIN_DATA_DIR || "/opt/cs2/server/game/csgo/addons/cs2fixes/data";
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || ""; // cs2zm-logs admin-action feed
 
 // CORS_ORIGIN may be "*", a single origin, or a comma-separated allowlist.
 const ALLOWED_ORIGINS = CORS_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
@@ -450,6 +451,50 @@ function readRequestBody(req, limit = 8192) {
     req.on("error", () => resolve(null));
   });
 }
+function humanDuration(min) {
+  if (min <= 0) return "Permanent";
+  if (min % 1440 === 0) { const d = min / 1440; return `${d} day${d === 1 ? "" : "s"}`; }
+  if (min % 60 === 0) { const h = min / 60; return `${h} hour${h === 1 ? "" : "s"}`; }
+  return `${min} min`;
+}
+
+async function lookupPlayerName(steamId) {
+  try {
+    const rows = await readLeaderboard();
+    const hit = rows.find((r) => r.steamId === String(steamId));
+    return hit ? hit.name : null;
+  } catch { return null; }
+}
+
+// Fire-and-forget: mirror an admin action into the Discord cs2zm-logs channel.
+async function postDiscordAdminLog(cmd) {
+  if (!DISCORD_WEBHOOK_URL) return;
+  try {
+    const name = await lookupPlayerName(cmd.targetSteamId);
+    const colors = { kick: 0xE67E22, ban: 0xE23C3C, unban: 0x2ECC71 };
+    const titles = { kick: "👢 Player kicked", ban: "⛔ Player banned", unban: "✅ Player unbanned" };
+    const profileUrl = `https://steamcommunity.com/profiles/${cmd.targetSteamId}`;
+    const fields = [
+      { name: "Player", value: `${name ? name + "\n" : ""}[\`${cmd.targetSteamId}\`](${profileUrl})`, inline: true },
+      { name: "Admin", value: cmd.adminName || `\`${cmd.adminSteamId}\``, inline: true }
+    ];
+    if (cmd.action === "ban") fields.push({ name: "Duration", value: humanDuration(cmd.minutes), inline: true });
+    fields.push({ name: "Reason", value: String(cmd.reason || "No reason given").slice(0, 1024), inline: false });
+    const embed = {
+      title: titles[cmd.action] || "Admin action",
+      color: colors[cmd.action] ?? 0x888888,
+      fields,
+      footer: { text: "Ghostbe Studio · admin log" },
+      timestamp: new Date(cmd.createdAt || Date.now()).toISOString()
+    };
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "Admin Log", allowed_mentions: { parse: [] }, embeds: [embed] })
+    });
+  } catch (e) { console.error("discord webhook failed:", e.message); }
+}
+
 async function enqueueAdminCommand(cmd) {
   const file = path.join(ADMIN_DATA_DIR, "admin_commands.json");
   let queue = { commands: [] };
@@ -676,13 +721,15 @@ const server = http.createServer(async (req, res) => {
     if (!auth.perms[need]) { sendJson(req, res, 403, { error: "no permission" }); return; }
     if (!reason) reason = "No reason given";
 
-    await enqueueAdminCommand({
+    const cmd = {
       id: crypto.randomUUID(),
       action, targetSteamId, minutes, reason,
       adminSteamId: auth.steamId,
       adminName: auth.name,
       createdAt: Date.now()
-    });
+    };
+    await enqueueAdminCommand(cmd);
+    postDiscordAdminLog(cmd).catch(() => {});
     sendJson(req, res, 200, { ok: true });
     return;
   }
