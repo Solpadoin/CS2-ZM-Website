@@ -1,3 +1,7 @@
 .server-out.log
 .server-err.log
 node_modules/
+
+# Discord bot secret
+.env.discord
+.env*
