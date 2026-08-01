@@ -11,7 +11,7 @@ const crypto = require("node:crypto");
 
 const execFileAsync = promisify(execFile);
 
-const VERSION = "1.6.0";
+const VERSION = "1.7.0";
 const PORT = Number(process.env.PORT || 3000);
 // Frontend lives in the repo root (GitHub Pages serves the site). Locally this
 // lets `node server.js` preview the site; on the API host it only holds
@@ -41,6 +41,7 @@ const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 const ADMINS_PATH = process.env.ADMINS_PATH || "/opt/cs2/server/game/csgo/addons/cs2fixes/configs/admins.jsonc";
 const ADMIN_DATA_DIR = process.env.ADMIN_DATA_DIR || "/opt/cs2/server/game/csgo/addons/cs2fixes/data";
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || ""; // cs2zm-logs admin-action feed
+const DISCORD_REPORTS_WEBHOOK_URL = process.env.DISCORD_REPORTS_WEBHOOK_URL || ""; // cs2zm-reports feed
 
 // CORS_ORIGIN may be "*", a single origin, or a comma-separated allowlist.
 const ALLOWED_ORIGINS = CORS_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
@@ -495,6 +496,45 @@ async function postDiscordAdminLog(cmd) {
   } catch (e) { console.error("discord webhook failed:", e.message); }
 }
 
+// Append an in-game report to the on-disk log (kept for a future admin view).
+async function appendReport(rec) {
+  const file = path.join(ADMIN_DATA_DIR, "reports.json");
+  let data = { reports: [] };
+  try {
+    const j = JSON.parse(await fs.readFile(file, "utf8"));
+    if (Array.isArray(j.reports)) data = j;
+  } catch {}
+  data.reports.push(rec);
+  if (data.reports.length > 500) data.reports = data.reports.slice(-500);
+  await fs.writeFile(file, JSON.stringify(data), "utf8");
+  try { await execFileAsync("chown", ["steam:steam", file]); } catch {}
+  try { await fs.chmod(file, 0o664); } catch {}
+}
+
+// Fire-and-forget: mirror an in-game report into the Discord cs2zm-reports channel.
+async function postDiscordReport(rec) {
+  if (!DISCORD_REPORTS_WEBHOOK_URL) return;
+  try {
+    const profileUrl = rec.targetSteamId ? `https://steamcommunity.com/profiles/${rec.targetSteamId}` : null;
+    const embed = {
+      title: "🚨 Player report",
+      color: 0xE23C3C,
+      fields: [
+        { name: "Reported", value: profileUrl ? `${rec.targetName}\n[\`${rec.targetSteamId}\`](${profileUrl})` : (rec.targetName || "—"), inline: true },
+        { name: "By", value: rec.reporterName ? `${rec.reporterName}${rec.reporterSteamId ? `\n\`${rec.reporterSteamId}\`` : ""}` : "—", inline: true },
+        { name: "Reason", value: String(rec.reason || "—").slice(0, 1024), inline: false }
+      ],
+      footer: { text: "Ghostbe Studio · in-game !report" },
+      timestamp: new Date(rec.createdAt || Date.now()).toISOString()
+    };
+    await fetch(DISCORD_REPORTS_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "Reports", allowed_mentions: { parse: [] }, embeds: [embed] })
+    });
+  } catch (e) { console.error("discord report webhook failed:", e.message); }
+}
+
 async function enqueueAdminCommand(cmd) {
   const file = path.join(ADMIN_DATA_DIR, "admin_commands.json");
   let queue = { commands: [] };
@@ -730,6 +770,28 @@ const server = http.createServer(async (req, res) => {
     };
     await enqueueAdminCommand(cmd);
     postDiscordAdminLog(cmd).catch(() => {});
+    sendJson(req, res, 200, { ok: true });
+    return;
+  }
+
+  if (req.url === "/api/report" && req.method === "POST") {
+    // Only the local plugin may file reports; public requests arrive via nginx
+    // (which sets x-forwarded-for), so reject those.
+    if (req.headers["x-forwarded-for"]) { sendJson(req, res, 403, { error: "forbidden" }); return; }
+    let body;
+    try { body = JSON.parse((await readRequestBody(req)) || "{}"); } catch { body = null; }
+    if (!body) { sendJson(req, res, 400, { error: "bad body" }); return; }
+    const rec = {
+      id: crypto.randomUUID(),
+      reporterName: String(body.reporterName || "").slice(0, 64),
+      reporterSteamId: String(body.reporterSteamId || ""),
+      targetName: String(body.targetName || "").slice(0, 64),
+      targetSteamId: String(body.targetSteamId || ""),
+      reason: String(body.reason || "").slice(0, 200),
+      createdAt: Date.now()
+    };
+    await appendReport(rec);
+    postDiscordReport(rec).catch(() => {});
     sendJson(req, res, 200, { ok: true });
     return;
   }
