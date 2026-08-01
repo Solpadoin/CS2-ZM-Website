@@ -8,10 +8,11 @@ const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const crypto = require("node:crypto");
+const net = require("node:net");
 
 const execFileAsync = promisify(execFile);
 
-const VERSION = "1.7.0";
+const VERSION = "1.8.0";
 const PORT = Number(process.env.PORT || 3000);
 // Frontend lives in the repo root (GitHub Pages serves the site). Locally this
 // lets `node server.js` preview the site; on the API host it only holds
@@ -42,6 +43,28 @@ const ADMINS_PATH = process.env.ADMINS_PATH || "/opt/cs2/server/game/csgo/addons
 const ADMIN_DATA_DIR = process.env.ADMIN_DATA_DIR || "/opt/cs2/server/game/csgo/addons/cs2fixes/data";
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || ""; // cs2zm-logs admin-action feed
 const DISCORD_REPORTS_WEBHOOK_URL = process.env.DISCORD_REPORTS_WEBHOOK_URL || ""; // cs2zm-reports feed
+const RCON_PASSWORD = process.env.RCON_PASSWORD || ""; // to reload admins after granting/revoking
+
+// ---- admin roles (flag presets) ----
+const ADMIN_ROLES = [
+  { id: "root",       label: "Root",        flags: "z" },              // everything + can manage admins
+  { id: "superadmin", label: "Super-Admin", flags: "abcdefghijklmn" }, // all serious perms incl. rcon, not root
+  { id: "admin",      label: "Admin",       flags: "bcde" },           // kick + ban + unban
+  { id: "moder",      label: "Moder",       flags: "bcd" },            // kick + ban
+  { id: "helper",     label: "Helper",      flags: "bc" }              // kick
+];
+function roleFromFlags(flags) {
+  const f = String(flags || "");
+  if (f.includes("z")) return ADMIN_ROLES[0];
+  const set = new Set(f.replace(/[^a-y]/g, "").split(""));
+  for (const r of ADMIN_ROLES) {
+    if (r.id === "root") continue;
+    const rset = new Set(r.flags.split(""));
+    if (set.size === rset.size && [...rset].every((c) => set.has(c))) return r;
+  }
+  return { id: "custom", label: "Custom", flags: f };
+}
+function roleById(id) { return ADMIN_ROLES.find((r) => r.id === id) || null; }
 
 // CORS_ORIGIN may be "*", a single origin, or a comma-separated allowlist.
 const ALLOWED_ORIGINS = CORS_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
@@ -419,8 +442,12 @@ async function getAdmin(steamId) {
   if (!entry) return null;
   const flags = String(entry.flags || "");
   const root = flags.includes("z");
+  const role = roleFromFlags(flags);
   return {
     name: entry.name || "",
+    flags,
+    role: role.id,
+    roleLabel: role.label,
     perms: {
       kick: root || flags.includes("c"),
       ban: root || flags.includes("d"),
@@ -434,7 +461,13 @@ async function requireAdmin(req) {
   if (!s || !s.steamId) return null;
   const admin = await getAdmin(s.steamId);
   if (!admin) return null;
-  return { steamId: String(s.steamId), name: s.name || admin.name, perms: admin.perms };
+  return {
+    steamId: String(s.steamId),
+    name: s.name || admin.name,
+    perms: admin.perms,
+    role: admin.role,
+    roleLabel: admin.roleLabel
+  };
 }
 function csrfOk(req) {
   // Credentialed admin POSTs must come from our own site origin (blocks cross-site CSRF).
@@ -533,6 +566,90 @@ async function postDiscordReport(rec) {
       body: JSON.stringify({ username: "Reports", allowed_mentions: { parse: [] }, embeds: [embed] })
     });
   } catch (e) { console.error("discord report webhook failed:", e.message); }
+}
+
+// Minimal Source RCON client (used only to reload admins after a file edit).
+function rconCommand(command) {
+  return new Promise((resolve) => {
+    if (!RCON_PASSWORD) { resolve({ ok: false, error: "no rcon password" }); return; }
+    const sock = net.connect(CS2_PORT, CS2_HOST);
+    let buf = Buffer.alloc(0), authed = false, out = "";
+    const finish = (ok, data) => { try { sock.destroy(); } catch {} resolve({ ok, data }); };
+    const pkt = (id, type, body) => {
+      const b = Buffer.from(body, "utf8");
+      const p = Buffer.alloc(b.length + 14);
+      p.writeInt32LE(b.length + 10, 0); p.writeInt32LE(id, 4); p.writeInt32LE(type, 8);
+      b.copy(p, 12);
+      return p;
+    };
+    sock.setTimeout(4000);
+    sock.on("timeout", () => finish(false, "timeout"));
+    sock.on("error", () => finish(false, "error"));
+    sock.on("connect", () => sock.write(pkt(1, 3, RCON_PASSWORD))); // AUTH
+    sock.on("data", (d) => {
+      buf = Buffer.concat([buf, d]);
+      while (buf.length >= 4) {
+        const size = buf.readInt32LE(0);
+        if (buf.length < size + 4) break;
+        const id = buf.readInt32LE(4), type = buf.readInt32LE(8);
+        const body = buf.slice(12, size + 2).toString("utf8");
+        buf = buf.slice(size + 4);
+        if (!authed) {
+          if (id === -1) return finish(false, "auth failed");
+          if (type === 2) { authed = true; sock.write(pkt(2, 2, command)); }
+        } else {
+          out += body;
+          setTimeout(() => finish(true, out), 120); // gather any trailing packet
+        }
+      }
+    });
+  });
+}
+
+const ADMINS_HEADER = `//---------------------
+// Managed by the OldSchool ZP website admin panel.
+// Flags: a reserved | b generic | c kick | d ban | e unban | f slay | g map
+//        h cvars | i config | j chat | k vote | l password | m rcon | n cheats | z ROOT
+//---------------------
+`;
+async function readAdminsFull() {
+  try {
+    const data = JSON.parse(stripJsonc(await fs.readFile(ADMINS_PATH, "utf8")));
+    return {
+      Groups: (data && typeof data.Groups === "object") ? data.Groups : {},
+      Admins: (data && typeof data.Admins === "object") ? data.Admins : {}
+    };
+  } catch { return { Groups: {}, Admins: {} }; }
+}
+async function writeAdmins(full) {
+  const body = ADMINS_HEADER + JSON.stringify({ Groups: full.Groups || {}, Admins: full.Admins || {} }, null, "\t") + "\n";
+  await fs.writeFile(ADMINS_PATH, body, "utf8");
+  try { await execFileAsync("chown", ["steam:steam", ADMINS_PATH]); } catch {}
+  try { await fs.chmod(ADMINS_PATH, 0o664); } catch {}
+}
+
+// Fire-and-forget Discord notice when an admin role is granted, changed or removed.
+async function postDiscordAdminRole({ action, targetSteamId, targetName, roleLabel, actorName, actorSteamId }) {
+  if (!DISCORD_WEBHOOK_URL) return;
+  try {
+    const colors = { grant: 0x2ECC71, update: 0xE6B800, revoke: 0xE23C3C };
+    const titles = { grant: "🛡 Admin granted", update: "🔁 Admin role changed", revoke: "🚫 Admin removed" };
+    const profileUrl = `https://steamcommunity.com/profiles/${targetSteamId}`;
+    const fields = [
+      { name: "Player", value: `${targetName || "—"}\n[\`${targetSteamId}\`](${profileUrl})`, inline: true },
+      { name: "By", value: `${actorName || "—"}${actorSteamId ? `\n\`${actorSteamId}\`` : ""}`, inline: true }
+    ];
+    if (action !== "revoke") fields.push({ name: "Role", value: roleLabel || "—", inline: true });
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "Admin Log",
+        allowed_mentions: { parse: [] },
+        embeds: [{ title: titles[action] || "Admin change", color: colors[action] ?? 0x888888, fields, footer: { text: "Ghostbe Studio · admin management" }, timestamp: new Date().toISOString() }]
+      })
+    });
+  } catch (e) { console.error("discord admin-role webhook failed:", e.message); }
 }
 
 async function enqueueAdminCommand(cmd) {
@@ -700,8 +817,69 @@ const server = http.createServer(async (req, res) => {
   if (req.url?.startsWith("/api/admin/me")) {
     const auth = await requireAdmin(req);
     sendJson(req, res, 200, auth
-      ? { isAdmin: true, steamId: auth.steamId, name: auth.name, perms: auth.perms }
+      ? { isAdmin: true, steamId: auth.steamId, name: auth.name, perms: auth.perms,
+          role: auth.role, roleLabel: auth.roleLabel, canManageAdmins: !!auth.perms.root }
       : { isAdmin: false });
+    return;
+  }
+
+  // ---- Root-only admin management (grant / revoke / list) ----
+  if (req.url?.startsWith("/api/admin/roles")) {
+    const auth = await requireAdmin(req);
+    if (!auth) { sendJson(req, res, 403, { error: "forbidden" }); return; }
+    sendJson(req, res, 200, { roles: ADMIN_ROLES.map((r) => ({ id: r.id, label: r.label })) });
+    return;
+  }
+
+  if (req.url?.startsWith("/api/admin/list")) {
+    const auth = await requireAdmin(req);
+    if (!auth || !auth.perms.root) { sendJson(req, res, 403, { error: "forbidden" }); return; }
+    const admins = await readAdmins();
+    const list = Object.entries(admins).map(([sid, e]) => {
+      const role = roleFromFlags(String(e.flags || ""));
+      return { steamId: String(sid), name: e.name || "", flags: String(e.flags || ""), role: role.id, roleLabel: role.label };
+    });
+    sendJson(req, res, 200, { admins: list, self: auth.steamId });
+    return;
+  }
+
+  if (req.url?.startsWith("/api/admin/grant") || req.url?.startsWith("/api/admin/revoke")) {
+    if (req.method !== "POST") { sendJson(req, res, 405, { error: "method" }); return; }
+    if (!csrfOk(req)) { sendJson(req, res, 403, { error: "bad origin" }); return; }
+    const auth = await requireAdmin(req);
+    if (!auth || !auth.perms.root) { sendJson(req, res, 403, { error: "forbidden" }); return; }
+
+    let body;
+    try { body = JSON.parse((await readRequestBody(req)) || "{}"); } catch { body = null; }
+    if (!body) { sendJson(req, res, 400, { error: "bad body" }); return; }
+
+    const targetSteamId = String(body.targetSteamId || "");
+    if (!/^\d{17}$/.test(targetSteamId)) { sendJson(req, res, 400, { error: "bad steamid" }); return; }
+    if (targetSteamId === auth.steamId) { sendJson(req, res, 400, { error: "You cannot change your own admin rights." }); return; }
+
+    const full = await readAdminsFull();
+    const isRevoke = req.url.startsWith("/api/admin/revoke");
+    const existed = !!full.Admins[targetSteamId];
+
+    if (isRevoke) {
+      if (!existed) { sendJson(req, res, 404, { error: "not an admin" }); return; }
+      const targetName = full.Admins[targetSteamId].name || "";
+      delete full.Admins[targetSteamId];
+      await writeAdmins(full);
+      const rc = await rconCommand("c_reload_admins");
+      postDiscordAdminRole({ action: "revoke", targetSteamId, targetName, actorName: auth.name, actorSteamId: auth.steamId }).catch(() => {});
+      sendJson(req, res, 200, { ok: true, reloaded: rc.ok });
+      return;
+    }
+
+    const role = roleById(String(body.role || ""));
+    if (!role) { sendJson(req, res, 400, { error: "bad role" }); return; }
+    const name = String(body.name || full.Admins[targetSteamId]?.name || "Admin").replace(/["\\\r\n\t]/g, "").slice(0, 32) || "Admin";
+    full.Admins[targetSteamId] = { name, flags: role.flags };
+    await writeAdmins(full);
+    const rc = await rconCommand("c_reload_admins");
+    postDiscordAdminRole({ action: existed ? "update" : "grant", targetSteamId, targetName: name, roleLabel: role.label, actorName: auth.name, actorSteamId: auth.steamId }).catch(() => {});
+    sendJson(req, res, 200, { ok: true, reloaded: rc.ok, role: role.id, roleLabel: role.label });
     return;
   }
 

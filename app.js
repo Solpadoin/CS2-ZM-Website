@@ -518,9 +518,64 @@ async function initAdminPage() {
   if (!me.isAdmin) { $("[data-admin-denied]").classList.remove("hidden"); return; }
   ADMIN_PERMS = me.perms || {};
   $("[data-admin-body]").classList.remove("hidden");
+  if (me.roleLabel) { setText("[data-admin-role]", me.roleLabel); $("[data-admin-role-line]")?.classList.remove("hidden"); }
   initAdminModal();
   loadAdminData();
   setInterval(loadAdminData, 5000);
+  if (me.canManageAdmins) initAdminManagement();
+}
+
+async function initAdminManagement() {
+  const card = $("[data-admin-manage]");
+  if (!card) return;
+  card.classList.remove("hidden");
+
+  try {
+    const { roles } = await (await adminApi("/api/admin/roles")).json();
+    $("[data-grant-role]").innerHTML = (roles || []).map(r => `<option value="${r.id}">${escapeHtml(r.label)}</option>`).join("");
+  } catch {}
+
+  const loadList = async () => {
+    try {
+      const { admins, self } = await (await adminApi("/api/admin/list")).json();
+      $("[data-admin-list]").innerHTML = (admins || []).map(a => `
+        <div class="log-entry" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div><b>${escapeHtml(a.name || a.steamId)}</b> <span class="tag">${escapeHtml(a.roleLabel)}</span><br>
+            <span class="lm" style="font-size:12px">${escapeHtml(a.steamId)}</span></div>
+          ${a.steamId === self ? '<span class="muted" style="font-size:12px">you</span>'
+            : `<button class="btn btn--danger btn--tiny" data-revoke="${a.steamId}" data-name="${escapeHtml(a.name || "")}">Revoke</button>`}
+        </div>`).join("") || '<p class="muted" style="padding:12px">No admins.</p>';
+    } catch {}
+  };
+  await loadList();
+
+  const msg = (t, ok) => { const el = $("[data-grant-msg]"); el.textContent = t; el.classList.remove("hidden"); el.style.color = ok ? "var(--good)" : "var(--red-soft)"; };
+  $("[data-grant-btn]").addEventListener("click", async () => {
+    const sid = $("[data-grant-sid]").value.trim();
+    const name = $("[data-grant-name]").value.trim();
+    const role = $("[data-grant-role]").value;
+    if (!/^\d{17}$/.test(sid)) { msg("Enter a valid 17-digit SteamID64.", false); return; }
+    try {
+      const r = await adminApi("/api/admin/grant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetSteamId: sid, name, role }) });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { msg(j.error || "Failed.", false); return; }
+      msg(`Granted ${j.roleLabel}${j.reloaded ? "" : " (reload pending — applies next map)"}.`, true);
+      $("[data-grant-sid]").value = ""; $("[data-grant-name]").value = "";
+      loadList();
+    } catch { msg("Network error.", false); }
+  });
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-revoke]");
+    if (!btn) return;
+    if (!confirm(`Revoke admin from ${btn.dataset.name || btn.dataset.revoke}?`)) return;
+    try {
+      const r = await adminApi("/api/admin/revoke", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetSteamId: btn.dataset.revoke }) });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { toast(j.error || "Failed"); return; }
+      toast("Admin revoked"); loadList();
+    } catch { toast("Network error"); }
+  });
 }
 
 /* ============================================================

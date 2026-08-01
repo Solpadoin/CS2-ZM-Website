@@ -42,6 +42,7 @@
         <p class="eyebrow">Staff only</p>
         <h2>Administration</h2>
         <p>Actions are executed by the game server plugin — the site only sends instructions. Every action is logged with who, when and why.</p>
+        <p class="hidden" data-admin-role-line style="margin-top:6px">Your role: <span class="tag" data-admin-role>—</span></p>
       </div>
 
       <!-- access gate -->
@@ -87,6 +88,30 @@
             <div class="panel-head"><h3>Action Log</h3></div>
             <div data-admin-log style="height:300px;overflow-y:auto;padding:6px 4px"></div>
             <div class="admin-pager-bar" data-admin-log-pager></div>
+          </div>
+        </div>
+
+        <!-- admin management (root only) -->
+        <div class="card hidden" data-admin-manage style="margin-top:22px">
+          <div class="panel-head"><h3>Admin Management</h3><span class="count">Root only</span></div>
+          <div class="card-pad">
+            <div class="split" style="grid-template-columns:1fr 1.1fr;gap:22px">
+              <div>
+                <label class="muted" style="font-size:12px;letter-spacing:.1em;text-transform:uppercase">Grant / change admin</label>
+                <input type="text" data-grant-sid maxlength="17" placeholder="SteamID64 (17 digits)"
+                  style="width:100%;margin-top:8px;padding:11px 14px;border-radius:11px;background:var(--panel);border:1px solid var(--line);color:var(--bone);font-family:var(--font-body);font-size:14px;outline:none">
+                <input type="text" data-grant-name maxlength="32" placeholder="Display name"
+                  style="width:100%;margin-top:10px;padding:11px 14px;border-radius:11px;background:var(--panel);border:1px solid var(--line);color:var(--bone);font-family:var(--font-body);font-size:14px;outline:none">
+                <select data-grant-role
+                  style="width:100%;margin-top:10px;padding:11px 14px;border-radius:11px;background:var(--panel);border:1px solid var(--line);color:var(--bone);font-family:var(--font-body);font-size:14px;outline:none"></select>
+                <button class="btn btn--primary btn--block" data-grant-btn style="margin-top:12px">Grant admin</button>
+                <p class="muted hidden" data-grant-msg style="margin-top:10px"></p>
+              </div>
+              <div>
+                <label class="muted" style="font-size:12px;letter-spacing:.1em;text-transform:uppercase">Current admins</label>
+                <div data-admin-list style="margin-top:8px;max-height:340px;overflow-y:auto;padding-right:4px"></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
